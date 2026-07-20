@@ -127,9 +127,9 @@ class CharTokenizer(Tokenizer):
     Simplest possible tokenizer: one token per character.
 
     Vocab is just the sorted set of unique characters seen in training text.
-    No unknown-token handling beyond what you train on — if you encode text
-    with a character that wasn't in the training data, it will raise a
-    KeyError. That's intentional for now: it keeps the code honest about
+    Unknown characters are mapped to the <unk> token.
+    Characters not seen during training will not raise an error but will be
+    represented as an unknown token ID.. That's intentional for now: it keeps the code honest about
     what "training" a tokenizer actually means, and we'll handle unknowns
     (<unk>) properly when we get to the word tokenizer.
     """
@@ -203,10 +203,12 @@ if __name__ == "__main__":
 
     decoded = tok.decode(ids)
     print(f"decoded: {decoded}")
+
+    #Test unknown token handling
+    #Numbers exist in the training data, so they should have Valid IDs
     numbers = "12345"
-
     ids = tok.encode(numbers)
-
     print(ids)
+
     assert decoded == sample, "Round-trip failed!"
     print("Round-trip OK.")
