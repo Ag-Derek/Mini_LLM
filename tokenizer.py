@@ -7,9 +7,90 @@ Tokenizers for mini_llm. We start with a character-level tokenizer
 All tokenizers share the same interface (see Tokenizer base class) so the
 rest of the pipeline (dataset.py, train.py, generate.py) never needs to
 know which one is active.
+
+===========================================================
+HOW TO RUN THIS TEST
+===========================================================
+
+1. Install Python
+-----------------
+Make sure Python is installed.
+
+Check installation:
+
+    python --version
+
+Expected output example:
+
+    Python 3.x.x
+
+
+If Python is not found, install it from:
+https://www.python.org/downloads/
+
+
+2. Open PowerShell
+------------------
+Navigate to the folder containing this file.
+
+Example:
+
+    cd C:\Users\HomePC\Documents\Python
+
+
+3. Verify the file exists
+-------------------------
+Check that tokenizer.py is in the current directory:
+
+    dir
+
+Expected output:
+
+    tokenizer.py
+
+
+4. Run the tokenizer
+--------------------
+Execute:
+
+    python tokenizer.py
+
+
+If Python is not added to PATH, use the full Python path:
+
+    & "C:\Path\To\Python\python.exe" tokenizer.py
+
+
+5. Expected output
+------------------
+A successful run should display:
+
+    - vocabulary size
+    - vocabulary dictionary
+    - encoded token IDs
+    - decoded text
+    - unknown token handling test
+    - Round-trip OK.
+
+
+The sanity check verifies:
+
+    Text
+      |
+      v
+    Tokenizer
+      |
+      v
+    Token IDs
+      |
+      v
+    Decoded Text
+
+The decoded text should match the original input.
+
+===========================================================
 """
 
-from email.mime import text
 import json
 from pathlib import Path
 
