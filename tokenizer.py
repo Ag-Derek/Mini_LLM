@@ -8,13 +8,15 @@ All tokenizers share the same interface (see Tokenizer base class) so the
 rest of the pipeline (dataset.py, train.py, generate.py) never needs to
 know which one is active.
 
+
 ===========================================================
 HOW TO RUN THIS TEST
 ===========================================================
 
 1. Install Python
 -----------------
-Make sure Python is installed.
+
+Make sure Python is installed on your computer.
 
 Check installation:
 
@@ -25,44 +27,70 @@ Expected output example:
     Python 3.x.x
 
 
-If Python is not found, install it from:
-https://www.python.org/downloads/
+If Python is not found, download and install it from:
 
+    https://www.python.org/downloads/
+
+
+During installation on Windows:
+
+    - Enable "Add Python to PATH"
+    - Complete the installation
+    - Restart VS Code or PowerShell
+
+
+===========================================================
 
 2. Open PowerShell
 ------------------
+
 Navigate to the folder containing this file.
 
 Example:
 
-    cd C:\Users\HomePC\Documents\Python
+    cd C:/Users/HomePC/Documents/GitHub/Mini_LLM
 
+
+===========================================================
 
 3. Verify the file exists
 -------------------------
+
 Check that tokenizer.py is in the current directory:
 
     dir
 
-Expected output:
+
+Expected output should include:
 
     tokenizer.py
 
 
+===========================================================
+
 4. Run the tokenizer
 --------------------
+
 Execute:
 
     python tokenizer.py
 
 
-If Python is not added to PATH, use the full Python path:
+If Python is not available through PATH, use the full Python path:
 
-    & "C:\Path\To\Python\python.exe" tokenizer.py
+    & "C:/Path/To/Python/python.exe" tokenizer.py
 
+
+Example:
+
+    & "C:/Users/HomePC/AppData/Local/Programs/Python/Python314/python.exe" tokenizer.py
+
+
+===========================================================
 
 5. Expected output
 ------------------
+
 A successful run should display:
 
     - vocabulary size
@@ -70,29 +98,48 @@ A successful run should display:
     - encoded token IDs
     - decoded text
     - unknown token handling test
-    - Round-trip OK.
+    - Round-trip OK
 
 
-The sanity check verifies:
+===========================================================
 
-    Text
-      |
-      v
+WHAT THE SANITY CHECK VERIFIES
+------------------------------
+
+The tokenizer pipeline:
+
+    Raw Text
+        |
+        v
     Tokenizer
-      |
-      v
+        |
+        v
     Token IDs
-      |
-      v
-    Decoded Text
+        |
+        v
+    Decoder
+        |
+        v
+    Reconstructed Text
+
 
 The decoded text should match the original input.
+
+This confirms:
+
+    - vocabulary creation works
+    - encoding works
+    - decoding works
+    - token IDs map correctly
+    - unknown characters are handled correctly
+
 
 ===========================================================
 """
 
 import json
 from pathlib import Path
+from pydoc import text
 
 
 class Tokenizer:
@@ -140,25 +187,32 @@ class CharTokenizer(Tokenizer):
 
     def train(self, text: str) -> None:
 
+        text = text.lower()
+
         chars = sorted(set(text))
 
         chars = ["<unk>"] + chars
 
         self.stoi = {
-        ch: i 
-        for i, ch in enumerate(chars)
-            }
+        ch:i for i,ch in enumerate(chars)
+        }
 
         self.itos = {
-        i: ch
-        for i, ch in enumerate(chars)
-            }
+        i:ch for i,ch in enumerate(chars)
+        }
 
     def encode(self, text: str) -> list[int]:
+        """
+        Convert text into token IDs.
+        Text is converted to lowercase before tokenization.
+        """
+
+        text = text.lower()
+
         return [
         self.stoi.get(ch, self.stoi["<unk>"])
         for ch in text
-    ]
+         ]
 
     def decode(self, ids: list[int]) -> str:
         return "".join(self.itos[i] for i in ids)
@@ -209,6 +263,13 @@ if __name__ == "__main__":
     numbers = "12345"
     ids = tok.encode(numbers)
     print(ids)
+    
+    test = "ChatGPT"
+
+    ids = tok.encode(test)
+
+    print(ids)
+    print(tok.decode(ids))
 
     assert decoded == sample, "Round-trip failed!"
     print("Round-trip OK.")
