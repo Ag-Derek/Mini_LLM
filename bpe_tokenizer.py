@@ -160,7 +160,21 @@ class BPETokenizer(Tokenizer):
 
         special_tokens = ["<pad>", "<unk>", "<bos>", "<eos>"]
 
-        subword_tokens = {symbol for symbols in splits.values() for symbol in symbols}
+            # Tokens produced after all BPE merges
+        subword_tokens = {
+                symbol
+                for symbols in splits.values()
+                for symbol in symbols
+            }
+
+            # Keep the original base characters as fallback tokens
+        base_chars = {
+                ch
+                for word in word_freqs
+                for ch in word
+            }
+
+        subword_tokens.update(base_chars)
 
         vocab = special_tokens + sorted(subword_tokens)
 
@@ -354,3 +368,7 @@ if __name__ == "__main__":
     ids = tok.encode(unseen_chars)
     print(ids)
     print(tok.decode(ids))
+print("\nTop learned merges:")
+
+for i, (pair, rank) in enumerate(sorted(tok.merges.items(), key=lambda x: x[1]), start=1):
+    print(f"{i:2}. {pair[0]} + {pair[1]} -> {pair[0] + pair[1]}")
