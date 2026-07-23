@@ -368,7 +368,16 @@ if __name__ == "__main__":
     ids = tok.encode(unseen_chars)
     print(ids)
     print(tok.decode(ids))
-print("\nTop learned merges:")
+if __name__ == "__main__":
 
-for i, (pair, rank) in enumerate(sorted(tok.merges.items(), key=lambda x: x[1]), start=1):
-    print(f"{i:2}. {pair[0]} + {pair[1]} -> {pair[0] + pair[1]}")
+    # your existing tests above...
+
+    print("\nTop learned merges:")
+
+    for i, (pair, rank) in enumerate(
+        sorted(tok.merges.items(), key=lambda x: x[1]),
+        start=1
+    ):
+        print(
+            f"{i:2}. {pair[0]} + {pair[1]} -> {pair[0] + pair[1]}"
+        )
