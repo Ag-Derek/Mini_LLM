@@ -155,3 +155,5 @@ if __name__ == "__main__":
     batch_inputs, batch_targets = next(iter(dataloader))
     print(f"Batch inputs shape:  {batch_inputs.shape}")
     print(f"Batch targets shape: {batch_targets.shape}")
+    print(tokenizer.decode(first_input.tolist()))
+    print(tokenizer.decode(first_target.tolist()))
