@@ -55,8 +55,9 @@ class MyEmbedding(nn.Module):
         # does with a normal distribution) rather than zeros, so that
         # different tokens start out distinguishable from one another
         # and gradients have something to push against.
-        self.weight = nn.Parameter(torch.randn(vocab_size, embedding_dim))
-
+        self.weight = nn.Parameter(
+                    torch.randn(vocab_size, embedding_dim) * 0.02
+                )
     def forward(self, token_ids: torch.Tensor) -> torch.Tensor:
         """
         Look up the embedding vector for each token id.
@@ -105,25 +106,40 @@ def compare_with_pytorch():
     identical = torch.allclose(my_out, torch_out)
     print("\nOutputs identical:", identical)
 
-    # ---- Demonstrate the "lookup table" nature directly ----
-    print("\nRow for token id 4 (via indexing):\n", my_emb.weight[4])
-    print("Row for token id 4 (via forward()):\n", my_emb(torch.tensor(4)))
-
     # ---- Demonstrate learning: gradients only touch used rows ----
     print("\n--- Gradient check ---")
+
     my_emb.zero_grad()
-    out = my_emb(torch.tensor([1, 1, 3]))  # token 1 used twice, token 3 once
+
+    gradient_test_ids = torch.tensor([1, 1, 3])
+
+    out = my_emb(gradient_test_ids)
+
     loss = out.sum()
+
     loss.backward()
 
     grad = my_emb.weight.grad
-    used_rows = (grad.abs().sum(dim=1) > 0).nonzero().squeeze(-1).tolist()
-    print("Rows with non-zero gradient:", used_rows)
-    print("(token 1 was used twice, so its gradient accumulates:)")
-    print("grad row 1:", grad[1])
-    print("grad row 3:", grad[3])
-    print("grad row 0 (unused, should be all zeros):", grad[0])
 
+    print("Gradient shape:", grad.shape)
+
+    used_rows = (
+    (grad.abs().sum(dim=1) > 0)
+    .nonzero()
+    .squeeze(-1)
+    .tolist()
+    )
+
+    print("Rows with non-zero gradient:", used_rows)
+
+    print("\nToken 1 was used twice, so its gradient accumulates:")
+    print("grad row 1:", grad[1])
+
+    print("\nToken 3 was used once:")
+    print("grad row 3:", grad[3])
+
+    print("\nToken 0 was unused, so it should be zero:")
+    print("grad row 0:", grad[0])
 
 if __name__ == "__main__":
     compare_with_pytorch()
