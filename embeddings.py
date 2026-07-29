@@ -56,8 +56,11 @@ class MyEmbedding(nn.Module):
         # different tokens start out distinguishable from one another
         # and gradients have something to push against.
         self.weight = nn.Parameter(
-                    torch.randn(vocab_size, embedding_dim) * 0.02
-                )
+        torch.empty(vocab_size, embedding_dim)
+        )
+
+        nn.init.normal_(self.weight, mean=0.0, std=0.02)
+
     def forward(self, token_ids: torch.Tensor) -> torch.Tensor:
         """
         Look up the embedding vector for each token id.
@@ -94,9 +97,28 @@ def compare_with_pytorch():
     with torch.no_grad():
         torch_emb.weight.copy_(my_emb.weight)
 
+    print("\nEmbedding table:")
+    print(my_emb.weight)
+
     token_ids = torch.tensor([[1, 4, 7], [2, 2, 9]])  # (batch=2, seq_len=3)
 
+    print("\nLookup examples:")
+    print("Token 1 ->", my_emb.weight[1])
+    print("Token 4 ->", my_emb.weight[4])
+    print("Token 7 ->", my_emb.weight[7])
+
     my_out = my_emb(token_ids)
+    print("\nVerifying lookups...")
+
+    print("weight[1] == output[0,0] :",
+      torch.equal(my_emb.weight[1], my_out[0, 0]))
+
+    print("weight[4] == output[0,1] :",
+      torch.equal(my_emb.weight[4], my_out[0, 1]))
+
+    print("weight[7] == output[0,2] :",
+      torch.equal(my_emb.weight[7], my_out[0, 2]))
+
     torch_out = torch_emb(token_ids)
 
     print("Input token ids:\n", token_ids)
@@ -141,5 +163,11 @@ def compare_with_pytorch():
     print("\nToken 0 was unused, so it should be zero:")
     print("grad row 0:", grad[0])
 
+    print("\nSummary")
+    print("-"*40)
+
+
+    print("\nEmbedding output:")
+    print(my_out)
 if __name__ == "__main__":
     compare_with_pytorch()
