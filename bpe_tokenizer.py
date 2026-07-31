@@ -78,6 +78,7 @@ import re
 from collections import Counter
 from pathlib import Path
 
+import config
 from tokenizer import Tokenizer
 
 
@@ -124,11 +125,15 @@ class BPETokenizer(Tokenizer):
     # training
     # ---------------------------------------------------------------
 
-    def train(self, text: str, num_merges: int = 200) -> None:
+    def train(self, text: str, num_merges: int = config.NUM_MERGES) -> None:
         """
         Build the vocabulary from raw text by learning up to `num_merges`
         BPE merges. Training stops early if there are no more repeated
         adjacent pairs left to merge.
+
+        num_merges defaults to config.NUM_MERGES so every part of the
+        project learns the same-sized vocab unless a caller deliberately
+        overrides it (e.g. a quick demo with a smaller corpus).
         """
         text = text.lower()
         words = self._WORD_PATTERN.findall(text)
@@ -139,6 +144,21 @@ class BPETokenizer(Tokenizer):
         splits: dict[str, list[str]] = {
             word: list(word) + [self.EOW] for word in word_freqs
         }
+
+        # Track every symbol that ever exists during training, not just
+        # whatever happens to survive in `splits` after the final merge.
+        # Bug this fixes: if, say, every occurrence of "th" in the corpus
+        # is later merged into "the", then "th" never appears in the final
+        # splits and would be dropped from the vocab entirely -- even
+        # though the tokenizer clearly learned it as an intermediate
+        # merge. Encoding an unseen word like "throw" would then produce
+        # "th" via _apply_merges but find it missing from stoi and fall
+        # back to <unk>, silently wasting a merge the model actually
+        # learned. Seeding with base characters + EOW up front, then
+        # adding each merge's output the moment it's created, means every
+        # symbol that was ever a valid subword stays in the vocab.
+        base_chars = {ch for word in word_freqs for ch in word}
+        all_symbols: set[str] = set(base_chars) | {self.EOW}
 
         merges_in_order: list[tuple[str, str]] = []
 
@@ -155,28 +175,11 @@ class BPETokenizer(Tokenizer):
                 splits[word] = self._merge_pair(splits[word], best_pair, merged_token)
 
             merges_in_order.append(best_pair)
+            all_symbols.add(merged_token)
 
         self.merges = {pair: rank for rank, pair in enumerate(merges_in_order)}
 
-        special_tokens = ["<pad>", "<unk>", "<bos>", "<eos>"]
-
-            # Tokens produced after all BPE merges
-        subword_tokens = {
-                symbol
-                for symbols in splits.values()
-                for symbol in symbols
-            }
-
-            # Keep the original base characters as fallback tokens
-        base_chars = {
-                ch
-                for word in word_freqs
-                for ch in word
-            }
-
-        subword_tokens.update(base_chars)
-
-        vocab = special_tokens + sorted(subword_tokens)
+        vocab = config.SPECIAL_TOKENS + sorted(all_symbols)
 
         self.stoi = {tok: i for i, tok in enumerate(vocab)}
         self.itos = {i: tok for i, tok in enumerate(vocab)}
@@ -246,7 +249,7 @@ class BPETokenizer(Tokenizer):
         words = self._WORD_PATTERN.findall(text)
 
         ids: list[int] = []
-        unk_id = self.stoi["<unk>"]
+        unk_id = self.stoi[config.UNK_TOKEN]
         for word in words:
             symbols = self._apply_merges(list(word) + [self.EOW])
             for symbol in symbols:
