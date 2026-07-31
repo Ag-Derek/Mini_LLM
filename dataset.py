@@ -18,6 +18,8 @@ produced the IDs.
 from torch.utils.data import Dataset, DataLoader
 import torch
 
+import config
+
 
 class TextDataset(Dataset):
     """
@@ -33,14 +35,22 @@ class TextDataset(Dataset):
         window 3: input=[9,42,9,31]   target=[42,9,31,70]
     """
 
-    def __init__(self, text, tokenizer, context_length=8, stride=1):
+    def __init__(
+        self,
+        text,
+        tokenizer,
+        context_length=config.CONTEXT_LENGTH,
+        stride=config.STRIDE,
+    ):
         """
         text:           raw string to train on
         tokenizer:      any object exposing .encode(text) -> list[int]
         context_length: how many tokens the model sees at once
+                        (defaults to config.CONTEXT_LENGTH)
         stride:         how far the window moves each step
                         (stride == context_length gives non-overlapping
-                        chunks; stride == 1 gives maximum overlap / data reuse)
+                        chunks; stride == 1 gives maximum overlap / data reuse;
+                        defaults to config.STRIDE)
         """
         if context_length < 1:
             raise ValueError("context_length must be >= 1")
@@ -85,9 +95,9 @@ class TextDataset(Dataset):
 def create_dataloader(
     text,
     tokenizer,
-    context_length=8,
-    stride=1,
-    batch_size=4,
+    context_length=config.CONTEXT_LENGTH,
+    stride=config.STRIDE,
+    batch_size=config.BATCH_SIZE,
     shuffle=True,
     drop_last=True,
     num_workers=0,
@@ -95,6 +105,10 @@ def create_dataloader(
     """
     Convenience wrapper: builds a TextDataset and hands back a DataLoader
     ready to feed a Transformer.
+
+    context_length/stride/batch_size default to config.py's values so a
+    call site only needs to override what's actually different for that
+    experiment.
 
         batch = next(iter(dataloader))
         inputs, targets = batch   # each shaped [batch_size, context_length]
