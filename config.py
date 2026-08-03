@@ -59,6 +59,11 @@ STRIDE = 4
 # Samples per training batch.
 BATCH_SIZE = 4
 
+# Fraction of the corpus held out for validation (by character count, on
+# the raw text before tokenizing). 0.1 = 90/10 train/val split -- a
+# reasonable default for a first language-modeling pass.
+VAL_RATIO = 0.1
+
 # ---------------------------------------------------------------------------
 # Embeddings (embeddings.py)
 # ---------------------------------------------------------------------------
@@ -93,10 +98,16 @@ LEARNING_RATE = 3e-4
 EPOCHS = 10
 
 # ---------------------------------------------------------------------------
-# Data paths (future data/corpus.py)
+# Data paths (data/corpus.py)
 # ---------------------------------------------------------------------------
 DATA_DIR = "data"
 CORPUS_FILENAME = "tiny_corpus.txt"
+
+# Fraction of the corpus held out for validation. A contiguous split (not
+# shuffled) is used -- see data/corpus.py's train_val_split() -- since
+# shuffling would let the model "see" future context out of order and
+# defeats the point of a held-out set for a language model.
+VAL_RATIO = 0.1
 
 
 if __name__ == "__main__":
@@ -114,6 +125,7 @@ if __name__ == "__main__":
     print("CONTEXT_LENGTH:", CONTEXT_LENGTH)
     print("STRIDE:", STRIDE)
     print("BATCH_SIZE:", BATCH_SIZE)
+    print("VAL_RATIO:", VAL_RATIO)
     print("EMBEDDING_DIM:", EMBEDDING_DIM)
     print("MAX_SEQ_LENGTH:", MAX_SEQ_LENGTH)
     print("NUM_HEADS:", NUM_HEADS)
@@ -121,4 +133,5 @@ if __name__ == "__main__":
     print("DROPOUT:", DROPOUT)
     print("LEARNING_RATE:", LEARNING_RATE)
     print("EPOCHS:", EPOCHS)
+    print("VAL_RATIO:", VAL_RATIO)
     print("Config OK.")

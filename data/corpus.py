@@ -64,9 +64,38 @@ def load_corpus(path: str | Path | None = None) -> str:
     return corpus_path.read_text(encoding="utf-8")
 
 
+def train_val_split(
+    text: str, val_ratio: float = config.VAL_RATIO
+) -> tuple[str, str]:
+    """
+    Split raw text into a (train_text, val_text) pair.
+
+    The split is a single contiguous cut -- the last `val_ratio` fraction
+    of characters becomes the validation set, everything before it is
+    training data. This is deliberately NOT a random/shuffled split:
+    shuffling individual lines or windows would let the tokenizer/model
+    train on text that sits chronologically after (and was learned
+    "from") material in the validation set, undermining the point of
+    holding data out. A single contiguous split is the standard approach
+    for this kind of small, single-document language modeling corpus.
+
+    val_ratio defaults to config.VAL_RATIO (0.1 -- i.e. a 90/10 split).
+    """
+    if not 0.0 < val_ratio < 1.0:
+        raise ValueError("val_ratio must be between 0 and 1 (exclusive)")
+
+    split_idx = int(len(text) * (1 - val_ratio))
+    return text[:split_idx], text[split_idx:]
+
+
 if __name__ == "__main__":
-    # Quick manual sanity check: python data/corpus.py
+    # Quick manual sanity check: python -m data.corpus
     text = load_corpus()
     print(f"Corpus path: {_default_corpus_path()}")
     print(f"Corpus length: {len(text):,} characters")
     print(f"First 200 characters:\n{text[:200]!r}")
+
+    train_text, val_text = train_val_split(text)
+    print(f"\nTrain/val split (val_ratio={config.VAL_RATIO}):")
+    print(f"  train: {len(train_text):,} characters")
+    print(f"  val:   {len(val_text):,} characters")

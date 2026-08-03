@@ -334,7 +334,7 @@ class BPETokenizer(Tokenizer):
 
 
 if __name__ == "__main__":
-    # Quick manual sanity check: python bpe_tokenizer.py
+    # Quick manual sanity check on a tiny demo string: python bpe_tokenizer.py
     sample = """
     hello world, this is a tiny llm tokenizer test!
     machine learning is amazing.
@@ -379,16 +379,37 @@ if __name__ == "__main__":
     ids = tok.encode(unseen_chars)
     print(ids)
     print(tok.decode(ids))
-if __name__ == "__main__":
 
-    # your existing tests above...
-
-    print("\nTop learned merges:")
-
+    print("\nTop learned merges (tiny demo string):")
     for i, (pair, rank) in enumerate(
         sorted(tok.merges.items(), key=lambda x: x[1]),
         start=1
     ):
-        print(
-            f"{i:2}. {pair[0]} + {pair[1]} -> {pair[0] + pair[1]}"
-        )
+        print(f"{i:2}. {pair[0]} + {pair[1]} -> {pair[0] + pair[1]}")
+
+    # ------------------------------------------------------------------
+    # Real-corpus comparison: train a second tokenizer on the full Tiny
+    # Shakespeare corpus (config.NUM_MERGES = 500 merges) and compare
+    # against the tiny 40-merge demo above. This is the number that
+    # actually matters for the project -- the demo above just exists to
+    # sanity-check the mechanics on a string small enough to eyeball.
+    # ------------------------------------------------------------------
+    from data.corpus import load_corpus
+
+    print("\n--- Training on the real corpus (Tiny Shakespeare) ---")
+    corpus_text = load_corpus()
+    print(f"Corpus length: {len(corpus_text):,} characters")
+
+    corpus_tok = BPETokenizer()
+    corpus_tok.train(corpus_text)  # num_merges defaults to config.NUM_MERGES
+
+    print(f"\n{'':20}{'demo string':>15}{'real corpus':>15}")
+    print(f"{'vocab_size':20}{tok.vocab_size:>15}{corpus_tok.vocab_size:>15}")
+    print(f"{'merges learned':20}{len(tok.merges):>15}{len(corpus_tok.merges):>15}")
+
+    print("\nTop 15 merges learned on the real corpus:")
+    for i, (pair, rank) in enumerate(
+        sorted(corpus_tok.merges.items(), key=lambda x: x[1])[:15],
+        start=1
+    ):
+        print(f"{i:2}. {pair[0]!r} + {pair[1]!r} -> {pair[0] + pair[1]!r}")

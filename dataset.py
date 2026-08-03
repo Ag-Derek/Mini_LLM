@@ -132,42 +132,47 @@ def load_text(path):
 
 if __name__ == "__main__":
     # ------------------------------------------------------------------
-    # Minimal smoke test using a tiny stand-in tokenizer, so this file
-    # runs standalone even before tokenizer.py is wired in. Swap in your
-    # real tokenizer (CharTokenizer / WordTokenizer / BPETokenizer) once
-    # it's available.
+    # Real-corpus smoke test: loads the actual Tiny Shakespeare corpus
+    # (data/corpus.py), splits it into train/val, trains BPE on the
+    # train split only (fitting the tokenizer on val text would leak
+    # val-specific vocabulary into training, defeating the point of
+    # holding it out), then builds datasets/dataloaders from each split.
     # ------------------------------------------------------------------
-    class DummyCharTokenizer:
-        """Encodes each character as its ordinal value. Just for testing."""
-
-        def encode(self, text):
-            return [ord(c) for c in text]
-
-        def decode(self, ids):
-            return "".join(chr(i) for i in ids)
-
-    sample_text = "I love AI because AI is amazing. " * 20
-
     from bpe_tokenizer import BPETokenizer
+    from data.corpus import load_corpus, train_val_split
+
+    text = load_corpus()
+    train_text, val_text = train_val_split(text)
+
+    print(f"Corpus length: {len(text):,} characters")
+    print(
+        f"Train split: {len(train_text):,} characters "
+        f"({100 * (1 - config.VAL_RATIO):.0f}%)"
+    )
+    print(
+        f"Val split:   {len(val_text):,} characters "
+        f"({100 * config.VAL_RATIO:.0f}%)"
+    )
 
     tokenizer = BPETokenizer()
-    tokenizer.train(sample_text, num_merges=100)
-    print(f"BPE vocab size: {tokenizer.vocab_size}")
-    context_length = 8
-    stride = 4
+    tokenizer.train(train_text)  # fit on train only, not val
+    print(f"\nBPE vocab size: {tokenizer.vocab_size}")
+    print(f"Merges learned: {len(tokenizer.merges)}")
 
-    dataset = TextDataset(sample_text, tokenizer, context_length=context_length, stride=stride)
-    print(f"Number of samples: {len(dataset)}")
+    train_dataset = TextDataset(train_text, tokenizer)
+    val_dataset = TextDataset(val_text, tokenizer)
+    print(f"\nTrain samples: {len(train_dataset):,}")
+    print(f"Val samples:   {len(val_dataset):,}")
 
-    first_input, first_target = dataset[0]
-    print(f"Sample 0 input:  {first_input.tolist()}")
+    first_input, first_target = train_dataset[0]
+    print(f"\nSample 0 input:  {first_input.tolist()}")
     print(f"Sample 0 target: {first_target.tolist()}")
+    print(f"Decoded input:  {tokenizer.decode(first_input.tolist())!r}")
+    print(f"Decoded target: {tokenizer.decode(first_target.tolist())!r}")
 
-    dataloader = create_dataloader(
-        sample_text, tokenizer, context_length=context_length, stride=stride, batch_size=4
-    )
-    batch_inputs, batch_targets = next(iter(dataloader))
-    print(f"Batch inputs shape:  {batch_inputs.shape}")
-    print(f"Batch targets shape: {batch_targets.shape}")
-    print(tokenizer.decode(first_input.tolist()))
-    print(tokenizer.decode(first_target.tolist()))
+    train_dataloader = create_dataloader(train_text, tokenizer)
+    val_dataloader = create_dataloader(val_text, tokenizer, shuffle=False)
+
+    batch_inputs, batch_targets = next(iter(train_dataloader))
+    print(f"\nTrain batch inputs shape:  {batch_inputs.shape}")
+    print(f"Train batch targets shape: {batch_targets.shape}")
