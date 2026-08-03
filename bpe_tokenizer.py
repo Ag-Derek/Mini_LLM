@@ -56,11 +56,11 @@ WHAT THE SANITY CHECK VERIFIES
     Reconstructed Text
 
 Like WordTokenizer, decode(encode(text)) == text is NOT guaranteed:
-lowercasing and whitespace normalization mean we can only reconstruct a
-readable version of the text, not the byte-exact original. What we do
-verify is the token-level round trip: encode(decode(encode(text))) ==
-encode(text) -- i.e. re-encoding the reconstructed text gives back the
-same token IDs.
+whitespace normalization means we can only reconstruct a readable version
+of the text, not the byte-exact original (case IS now preserved -- see
+train()/encode() docstrings). What we do verify is the token-level round
+trip: encode(decode(encode(text))) == encode(text) -- i.e. re-encoding
+the reconstructed text gives back the same token IDs.
 
 The sanity check confirms:
 
@@ -134,8 +134,13 @@ class BPETokenizer(Tokenizer):
         num_merges defaults to config.NUM_MERGES so every part of the
         project learns the same-sized vocab unless a caller deliberately
         overrides it (e.g. a quick demo with a smaller corpus).
+
+        Case is preserved deliberately (no .lower() here): for a corpus
+        like Tiny Shakespeare, capitalization carries real signal --
+        character names (ROMEO, JULIET) and sentence starts -- that a
+        language model can learn from. The tradeoff is a larger vocab,
+        since "the" and "The" now train as distinct symbol sequences.
         """
-        text = text.lower()
         words = self._WORD_PATTERN.findall(text)
 
         word_freqs = Counter(words)
@@ -238,14 +243,18 @@ class BPETokenizer(Tokenizer):
 
     def encode(self, text: str) -> list[int]:
         """
-        Convert text into token IDs. Text is lowercased and split into
-        word/punctuation units (same pattern as WordTokenizer), each unit
+        Convert text into token IDs. Text is split into word/punctuation
+        units (same pattern as WordTokenizer) preserving case, each unit
         is broken into characters + EOW, learned merges are replayed, and
         the resulting subword symbols are looked up. A symbol never seen
         during training (i.e. not produced by any merge and not a base
         character in the vocab) maps to <unk>.
+
+        Case is preserved to match train() -- see its docstring. This
+        means a word's case must match training for merges to apply the
+        same way: "Romeo" and "ROMEO" are different symbol sequences
+        unless both appeared during training.
         """
-        text = text.lower()
         words = self._WORD_PATTERN.findall(text)
 
         ids: list[int] = []
@@ -347,10 +356,9 @@ if __name__ == "__main__":
     decoded = tok.decode(ids)
     print(f"decoded: {decoded}")
 
-    # Like WordTokenizer, exact string round-trip isn't guaranteed (we
-    # lowercase and normalize whitespace), so check the token-level
-    # round trip instead: re-encoding the decoded text should give back
-    # the same IDs.
+    # Exact string round-trip isn't guaranteed (we normalize whitespace),
+    # so check the token-level round trip instead: re-encoding the
+    # decoded text should give back the same IDs.
     re_ids = tok.encode(decoded)
     assert re_ids == ids, "Token-level round-trip failed!"
     print("Token round-trip OK.")
