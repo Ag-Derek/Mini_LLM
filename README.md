@@ -25,6 +25,7 @@ Instead of importing an existing Transformer implementation, we progressively bu
 * Why multiple attention heads improve learning
 * How Transformer blocks are constructed
 * How GPT models learn to predict the next token
+* How a training loop turns gradients into a model that generalizes
 
 The ultimate goal is to build a fully functional GPT-style language model from scratch.
 
@@ -35,13 +36,7 @@ The ultimate goal is to build a fully functional GPT-style language model from s
 The complete data flow is shown below.
 
 ```text
-Raw Text
-    │
-    ▼
-Character Tokenizer
-    │
-    ▼
-Word Tokenizer
+Raw Text (Tiny Shakespeare)
     │
     ▼
 Byte Pair Encoding (BPE)
@@ -50,7 +45,7 @@ Byte Pair Encoding (BPE)
 Token IDs
     │
     ▼
-Dataset Pipeline
+Dataset Pipeline (train / val split)
     │
     ▼
 Token Embeddings
@@ -62,22 +57,27 @@ Positional Embeddings
 Combined Embeddings
     │
     ▼
-Multi-Head Self-Attention
-    │
+Transformer Block × 6
+    │  ├── Pre-LayerNorm
+    │  ├── Multi-Head Causal Self-Attention
+    │  ├── Residual Connection
+    │  ├── Pre-LayerNorm
+    │  ├── Feed-Forward Network
+    │  └── Residual Connection
     ▼
-Feed Forward Network
-    │
-    ▼
-Transformer Blocks
+Final LayerNorm
     │
     ▼
 Language Model Head
     │
     ▼
-Next Token Prediction
+Next Token Prediction (568-way logits)
     │
     ▼
-Generated Text
+Training (CrossEntropyLoss + AdamW)
+    │
+    ▼
+Generated Text  (next up)
 ```
 
 ---
@@ -86,19 +86,26 @@ Generated Text
 
 The following components have been implemented from scratch.
 
-| Component                    | Status     |
-| ---------------------------- | ---------- |
-| Character Tokenizer          | ✅ Complete |
-| Word Tokenizer               | ✅ Complete |
-| Byte Pair Encoding (BPE)     | ✅ Complete |
-| Dataset Pipeline             | ✅ Complete |
-| Custom Embedding Layer       | ✅ Complete |
-| Positional Embeddings        | ✅ Complete |
-| Scaled Dot-Product Attention | ✅ Complete |
-| Causal Self-Attention        | ✅ Complete |
-| Multi-Head Attention         | ✅ Complete |
+| Component                          | Status      |
+| ----------------------------------- | ----------- |
+| Character Tokenizer                 | ✅ Complete |
+| Word Tokenizer                      | ✅ Complete |
+| Byte Pair Encoding (BPE)            | ✅ Complete |
+| Dataset Pipeline (train/val split)  | ✅ Complete |
+| Custom Embedding Layer              | ✅ Complete |
+| Positional Embeddings               | ✅ Complete |
+| Scaled Dot-Product Attention        | ✅ Complete |
+| Causal Self-Attention               | ✅ Complete |
+| Multi-Head Attention                | ✅ Complete |
+| Feed-Forward Network                | ✅ Complete |
+| Pre-Norm Transformer Block          | ✅ Complete |
+| 6-Layer Transformer Stack           | ✅ Complete |
+| Final LayerNorm + LM Head           | ✅ Complete |
+| End-to-End Forward Pass (`model.py`)| ✅ Complete |
+| Training Loop (`train.py`)          | ✅ Complete |
+| Text Generation                     | ⏳ In Progress |
 
-Current progress places the project at approximately **60% completion** toward a fully functional GPT-style language model.
+Current progress places the project at approximately **85% completion** toward a fully functional GPT-style language model — the architecture and training pipeline are both wired end to end; generation is the remaining piece.
 
 ---
 
@@ -108,12 +115,11 @@ Current progress places the project at approximately **60% completion** toward a
 
 * Character-level tokenizer
 * Word-level tokenizer
-* Byte Pair Encoding (BPE)
+* Byte Pair Encoding (BPE), trained on the real corpus (568-token vocabulary at 500 merges)
+* Case preserved (not lowercased) so character names and sentence starts carry signal
 * Automatic vocabulary construction
-* Character-to-ID mapping
-* ID-to-character mapping
+* Token-to-ID and ID-to-token mapping
 * Unknown token handling
-* Lowercase normalization
 * Vocabulary serialization
 * Save and load functionality
 
@@ -121,10 +127,13 @@ Current progress places the project at approximately **60% completion** toward a
 
 ## Dataset Pipeline
 
+* Real training corpus: Tiny Shakespeare (~1.1M characters)
 * Sliding window sequence generation
-* Input-target pair creation
+* Input-target pair creation (target = input shifted by one token)
+* 90/10 contiguous train/validation split
 * Dataset abstraction using `torch.utils.data.Dataset`
 * Mini-batch loading with `DataLoader`
+* Centralized configuration via `config.py`
 
 ---
 
@@ -213,10 +222,98 @@ before their outputs are concatenated and projected back into the original embed
 
 ---
 
+## Feed-Forward Network
+
+Position-wise feed-forward network applied identically at every sequence position:
+
+```text
+Linear(embedding_dim → 4 × embedding_dim)
+        ↓
+      GELU
+        ↓
+Linear(4 × embedding_dim → embedding_dim)
+        ↓
+     Dropout
+```
+
+Where attention lets tokens exchange information, the feed-forward network transforms each token's representation independently and non-linearly.
+
+---
+
+## Transformer Block
+
+A Pre-Norm Transformer block combining multi-head attention with the feed-forward network:
+
+```text
+X1 = X  + Dropout(MHA(LayerNorm(X)))
+X2 = X1 + FFN(LayerNorm(X1))
+```
+
+Pre-Norm keeps the residual pathway clean, which makes deep stacks of blocks easier to train than the original Post-Norm formulation.
+
+Six of these blocks are stacked to form the full Transformer.
+
+---
+
+## Language Model (`model.py`)
+
+`MiniLLM` wires the full pipeline into a single `nn.Module`:
+
+```text
+Token IDs
+    ↓
+Token Embedding + Position Embedding
+    ↓
+Transformer Block × 6
+    ↓
+Final LayerNorm
+    ↓
+Linear LM Head (embedding_dim → vocab_size)
+    ↓
+Logits
+```
+
+Current configuration:
+
+| Setting              | Value       |
+| --------------------- | ----------- |
+| Vocabulary size       | 568         |
+| Embedding dimension   | 128         |
+| Attention heads        | 4           |
+| Dimensions per head    | 32          |
+| Transformer layers    | 6           |
+| Max sequence length   | 8           |
+| Dropout                | 0.1         |
+| FFN expansion          | 4×          |
+| Total parameters       | ~1.33M      |
+
+The end-to-end forward pass has been verified — a batch of token IDs of shape `(batch, seq_len)` produces logits of shape `(batch, seq_len, vocab_size)`.
+
+---
+
+## Training (`train.py`)
+
+A training loop that:
+
+* Loads and tokenizes the Tiny Shakespeare corpus
+* Builds train and validation `DataLoader`s
+* Instantiates `MiniLLM`, `CrossEntropyLoss`, and the `AdamW` optimizer
+* Runs a configurable number of epochs, drawing a fresh batch every step
+* Reports training loss and validation loss once per epoch, so overfitting is visible as it happens
+
+The pipeline was first verified with a single-batch overfit test (training repeatedly on one fixed batch), which confirmed loss collapses from the random-guess baseline (`ln(vocab_size) ≈ 6.34`) toward zero — proving gradients flow correctly through the entire computation graph before committing to a full training run.
+
+---
+
 # Repository Structure
 
 ```text
 Mini_LLM/
+│
+├── data/
+│   ├── tiny_corpus.txt
+│   ├── corpus.py
+│   └── README.md
 │
 ├── tokenizer.py
 ├── word_tokenizer.py
@@ -261,13 +358,13 @@ Embedding Layer
 Positional Embeddings
       │
       ▼
-Multi-Head Attention
+Transformer Block × 6
       │
       ▼
-Transformer Block
+Final LayerNorm + LM Head
       │
       ▼
-Prediction
+Next-Token Prediction
 ```
 
 Each stage transforms the data into increasingly meaningful numerical representations.
@@ -302,8 +399,9 @@ Topics covered include:
 * Scaled dot-product attention
 * Causal masking
 * Multi-head attention
-* Transformer architecture
-* Language model training
+* Feed-forward networks
+* Residual connections and Pre-Norm Transformer blocks
+* Language model training with train/validation splits
 * Autoregressive text generation
 
 ---
@@ -315,27 +413,26 @@ Topics covered include:
 * ✅ Character Tokenizer
 * ✅ Word Tokenizer
 * ✅ Byte Pair Encoding (BPE)
-* ✅ Dataset Pipeline
+* ✅ Dataset Pipeline (train/val split)
 * ✅ Custom Embedding Layer
 * ✅ Positional Embeddings
 * ✅ Scaled Dot-Product Attention
 * ✅ Causal Self-Attention
 * ✅ Multi-Head Attention
+* ✅ Feed-Forward Network
+* ✅ Pre-Norm Transformer Block
+* ✅ 6-Layer Transformer Stack
+* ✅ Language Model Head (`model.py`)
+* ✅ End-to-End Forward Pass
+* ✅ Training Pipeline (`train.py`, train/val loss per epoch)
 
 ## In Progress
 
-* ⏳ Feed Forward Network
-* ⏳ Layer Normalization
-* ⏳ Residual Connections
-* ⏳ Transformer Block
+* ⏳ Text Generation (autoregressive sampling)
 
 ## Planned
 
-* ⬜ Complete GPT Model
-* ⬜ Language Model Head
-* ⬜ Training Pipeline
 * ⬜ Model Evaluation
-* ⬜ Text Generation
 * ⬜ Model Checkpointing
 * ⬜ Interactive Chat Interface
 
