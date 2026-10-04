@@ -109,7 +109,7 @@ The following components have been implemented from scratch.
 | Model Checkpointing                 | ✅ Complete |
 | Text Generation (`generate.py`)     | ✅ Complete |
 
-The project is now a **working end-to-end GPT-style language model**: train it, save the best checkpoint, and sample text from it. It trains on 128-token windows with a whitespace-preserving tokenizer, so generated text keeps Shakespeare's line and speaker structure. The next phase is training quality (learning-rate schedule, gradient clipping, evaluation metrics).
+The project is now a **working end-to-end GPT-style language model**: train it, save the best checkpoint, and sample text from it. It trains on 128-token windows with a whitespace-preserving tokenizer, so generated text keeps Shakespeare's line and speaker structure. Training uses a warmup + cosine learning-rate schedule and gradient clipping, and reports validation perplexity and live samples as it goes.
 
 ---
 
@@ -300,14 +300,26 @@ The end-to-end forward pass has been verified — a batch of token IDs of shape 
 
 A training loop that:
 
-* Loads and tokenizes the Tiny Shakespeare corpus
+* Loads and tokenizes the Tiny Shakespeare corpus, reusing the tokenizer saved in `checkpoints/` when it matches the config (skips ~50s of BPE training)
 * Builds train and validation `DataLoader`s
 * Instantiates `MiniLLM`, `CrossEntropyLoss`, and the `AdamW` optimizer
 * Runs a configurable number of epochs, drawing a fresh batch every step
-* Takes every hyperparameter from `config.py` (128-token context, batch size 32, learning rate 1e-3, 5 epochs)
+* Uses a learning-rate schedule: linear warmup over the first 100 steps to a peak of 1e-3, then cosine decay to 1e-4
+* Clips the global gradient norm to 1.0 so one bad batch can't derail training
+* Takes every hyperparameter from `config.py` (128-token context, batch size 32, 10 epochs)
 * Runs on CUDA, Apple MPS, or CPU automatically (`config.DEVICE = "auto"`)
-* Reports training loss and validation loss once per epoch, so overfitting is visible as it happens
+* Every 100 steps reports train loss, validation loss and **perplexity** (`exp(val_loss)`), plus a short sample from the prompt `ROMEO:`, so you can watch the text improve
 * Saves the model and tokenizer to `checkpoints/` whenever validation loss improves (`checkpoint.py`)
+
+```text
+  Step | Epoch |       LR | Train Loss | Val Loss |  Val PPL
+--------------------------------------------------------------
+   300 |     1 | 4.33e-04 |     4.3947 |   4.1325 |    62.33  <- saved
+         ROMEO:
+         Pay fovedech, sir, Dileed.
+```
+
+Perplexity reads as "how many tokens the model is effectively choosing between": 569 means pure guessing over the vocabulary, and lower is better.
 
 The pipeline was first verified with a single-batch overfit test (training repeatedly on one fixed batch), which confirmed loss collapses from the random-guess baseline (`ln(vocab_size) ≈ 6.34`) toward zero — proving gradients flow correctly through the entire computation graph before committing to a full training run.
 
@@ -452,16 +464,16 @@ Topics covered include:
 * ✅ 6-Layer Transformer Stack
 * ✅ Language Model Head (`model.py`)
 * ✅ End-to-End Forward Pass
-* ✅ Training Pipeline (`train.py`, train/val loss per epoch)
-
-## In Progress
-
+* ✅ Training Pipeline (`train.py`, train/val loss)
 * ✅ Model Checkpointing
 * ✅ Text Generation (autoregressive sampling)
+* ✅ Learning-Rate Warmup + Cosine Decay, Gradient Clipping
+* ✅ Model Evaluation (validation perplexity + live samples)
 
 ## Planned
 
-* ⬜ Model Evaluation
+* ⬜ Weight Tying (shared token embedding / LM head)
+* ⬜ Test Suite (pytest)
 * ⬜ Interactive Chat Interface
 
 ---

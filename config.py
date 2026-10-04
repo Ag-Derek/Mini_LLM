@@ -106,7 +106,27 @@ DROPOUT = 0.1
 # 1e-3 is a common choice for a model this small; 3e-4 is the usual
 # default for larger GPTs but learns slowly given how few steps we run.
 LEARNING_RATE = 1e-3
-EPOCHS = 5
+EPOCHS = 10
+
+# Learning-rate schedule: ramp linearly from ~0 to LEARNING_RATE over the
+# first WARMUP_STEPS optimizer steps (large updates on freshly initialized
+# weights are what destabilize early training), then follow a cosine
+# curve down to MIN_LR by the final step, so the last epochs make small,
+# careful updates instead of bouncing around the minimum.
+WARMUP_STEPS = 100
+MIN_LR = LEARNING_RATE / 10
+
+# Rescale the gradients whenever their global L2 norm exceeds this, so a
+# single bad batch can't produce one huge destabilizing update.
+GRAD_CLIP = 1.0
+
+# Evaluate on the val set (and save a checkpoint if it improved) every
+# this many optimizer steps, instead of only once per epoch.
+EVAL_EVERY = 100
+
+# A short sample printed at every evaluation, to watch the text improve.
+SAMPLE_PROMPT = "ROMEO:"
+SAMPLE_TOKENS = 40
 
 # "auto" picks CUDA, then Apple MPS, then CPU. Set to "cpu" / "cuda" /
 # "mps" to force one.
@@ -165,5 +185,9 @@ if __name__ == "__main__":
     print("DROPOUT:", DROPOUT)
     print("LEARNING_RATE:", LEARNING_RATE)
     print("EPOCHS:", EPOCHS)
+    print("WARMUP_STEPS:", WARMUP_STEPS)
+    print("MIN_LR:", MIN_LR)
+    print("GRAD_CLIP:", GRAD_CLIP)
+    print("EVAL_EVERY:", EVAL_EVERY)
     print("DEVICE:", DEVICE)
     print("Config OK.")
