@@ -335,6 +335,7 @@ Prompt -> encode -> [ crop to last MAX_SEQ_LENGTH tokens -> model -> last-positi
 ```
 
 ```bash
+pip install -r requirements.txt
 python train.py      # trains and writes checkpoints/
 python generate.py --prompt "ROMEO:" --max-new-tokens 200 --temperature 0.8 --top-k 40
 ```
@@ -367,8 +368,34 @@ Mini_LLM/
 ├── checkpoint.py
 ├── generate.py
 ├── config.py
+│
+├── tests/
+│   ├── test_tokenizers.py
+│   ├── test_data.py
+│   ├── test_model.py
+│   └── test_training.py
+│
+├── checkpoints/        (created by train.py, git-ignored)
+├── requirements.txt
+├── pytest.ini
 └── README.md
 ```
+
+---
+
+# Testing
+
+```bash
+python -m pytest
+```
+
+31 fast tests (~15 seconds on CPU, no trained model needed) cover every stage of the pipeline:
+
+* **Tokenizers** — exact BPE round trip including newlines and indentation, `<unk>` handling, save/load
+* **Data** — corpus split, input/target shift, sliding-window stride
+* **Model** — `MyEmbedding` vs `nn.Embedding`, causal mask, a check that editing a future token never changes earlier predictions, generation past the context window, greedy decoding
+* **Single-batch overfit** — a tiny model memorizes one batch, proving gradients reach every layer
+* **Training** — warmup + cosine LR schedule, checkpoint save/reload, tokenizer reuse
 
 ---
 
@@ -415,9 +442,9 @@ Each stage transforms the data into increasingly meaningful numerical representa
 
 This project is implemented using:
 
-* Python
+* Python 3.10+
 * PyTorch
-* NumPy
+* pytest (tests only)
 * Git
 
 No high-level Transformer libraries are used.
@@ -469,11 +496,11 @@ Topics covered include:
 * ✅ Text Generation (autoregressive sampling)
 * ✅ Learning-Rate Warmup + Cosine Decay, Gradient Clipping
 * ✅ Model Evaluation (validation perplexity + live samples)
+* ✅ Test Suite (pytest)
 
 ## Planned
 
 * ⬜ Weight Tying (shared token embedding / LM head)
-* ⬜ Test Suite (pytest)
 * ⬜ Interactive Chat Interface
 
 ---

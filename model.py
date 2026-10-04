@@ -139,7 +139,9 @@ class MiniLLM(nn.Module):
 if __name__ == "__main__":
     torch.manual_seed(0)
 
-    vocab_size = 568  # matches your trained BPE tokenizer
+    # Any size works for a shape check; 569 is what the BPE tokenizer
+    # currently learns (4 special tokens + base characters + 500 merges).
+    vocab_size = 569
     model = MiniLLM(vocab_size=vocab_size)
 
     token_ids = torch.tensor([[1, 8]])  # (1, 2)

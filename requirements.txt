@@ -1,0 +1,5 @@
+# Python 3.10+ (the code uses `X | Y` type hints).
+torch>=2.0
+
+# Only needed to run the test suite (`python -m pytest`).
+pytest>=7.0

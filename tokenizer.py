@@ -139,7 +139,6 @@ This confirms:
 
 import json
 from pathlib import Path
-from pydoc import text
 
 
 class Tokenizer:

@@ -14,7 +14,7 @@ Where this fits in the pipeline:
                 |
     Remaining Transformer Layers (stacked blocks)
                 |
-    Final LayerNorm + Vocabulary Projection  (future gpt.py)
+    Final LayerNorm + Vocabulary Projection  (model.py)
 
 This file does NOT reimplement attention — it imports MultiHeadAttention
 directly from attention.py and wires it into a full Pre-Norm block:
@@ -30,7 +30,8 @@ Two new pieces are added here that attention.py doesn't have on its own:
                         no dropout, so it's added at the block level)
 
 Also builds TransformerBlocks, a stack of `config.NUM_LAYERS` blocks —
-the piece that will sit between embeddings and the final vocab head.
+the piece MiniLLM (model.py) places between the embeddings and the
+final vocab head.
 
 Run this file directly to see shapes at every stage:
 

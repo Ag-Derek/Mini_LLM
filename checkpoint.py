@@ -45,7 +45,7 @@ def save_checkpoint(model, model_config, tokenizer, epoch, val_loss,
     checkpoint_dir (defaults to config.CHECKPOINT_DIR).
 
     model_config: the keyword arguments MiniLLM was constructed with,
-                  e.g. {"vocab_size": 568, "embedding_dim": 128, ...}
+                  e.g. {"vocab_size": 569, "embedding_dim": 128, ...}
     """
     checkpoint_dir = Path(checkpoint_dir or default_checkpoint_dir())
     checkpoint_dir.mkdir(parents=True, exist_ok=True)

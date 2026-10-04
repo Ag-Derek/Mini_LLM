@@ -21,7 +21,7 @@ Why this file exists:
 
 Sections are grouped by pipeline stage, in the same order data flows
 through the project: tokenizer -> dataset -> embeddings -> attention ->
-(future) transformer -> training.
+transformer -> training -> checkpoints -> generation.
 """
 
 # ---------------------------------------------------------------------------
@@ -80,7 +80,7 @@ VAL_RATIO = 0.1
 EMBEDDING_DIM = 128
 
 # ---------------------------------------------------------------------------
-# Attention / Transformer (attention.py, future transformer.py)
+# Attention / Transformer (attention.py, transformer.py, model.py)
 # ---------------------------------------------------------------------------
 # Longest sequence the model can ever be asked to attend over. This sizes
 # the causal mask buffer in CausalSelfAttentionHead, so it must be >=
@@ -93,11 +93,11 @@ MAX_SEQ_LENGTH = CONTEXT_LENGTH
 # this (asserted in MultiHeadAttention).
 NUM_HEADS = 4
 
-# Number of stacked Transformer blocks (used once transformer.py exists).
+# Number of stacked Transformer blocks (transformer.py's TransformerBlocks).
 NUM_LAYERS = 6
 
-# Dropout probability (used once transformer.py / training add dropout
-# layers).
+# Dropout probability, applied to the embeddings (model.py), after
+# attention and inside the feed-forward network (transformer.py).
 DROPOUT = 0.1
 
 # ---------------------------------------------------------------------------

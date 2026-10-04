@@ -109,7 +109,7 @@ def load_or_train_tokenizer(train_text):
 
     print("Training BPE tokenizer...")
     tokenizer = BPETokenizer()
-    tokenizer.train(train_text)
+    tokenizer.train(train_text, num_merges=config.NUM_MERGES)
     return tokenizer
 
 
