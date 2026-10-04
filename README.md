@@ -273,7 +273,7 @@ Transformer Block × 6
     ↓
 Final LayerNorm
     ↓
-Linear LM Head (embedding_dim → vocab_size)
+Linear LM Head (embedding_dim → vocab_size, shares the token-embedding matrix)
     ↓
 Logits
 ```
@@ -290,9 +290,12 @@ Current configuration:
 | Max sequence length   | 128         |
 | Dropout                | 0.1         |
 | FFN expansion          | 4×          |
-| Total parameters       | ~1.35M      |
+| Weight tying           | On          |
+| Total parameters       | ~1.28M      |
 
 The end-to-end forward pass has been verified — a batch of token IDs of shape `(batch, seq_len)` produces logits of shape `(batch, seq_len, vocab_size)`.
+
+**Weight tying** (`config.TIE_WEIGHTS`): the LM head reuses the token-embedding matrix instead of learning its own. Both are `(vocab_size, embedding_dim)`, so one matrix serves both directions: a token is predicted when the final hidden state looks like that token's embedding. This saves 72,832 parameters and, over the same 10-epoch run, lowered the best validation loss from 3.308 to 3.256 (perplexity 27.3 → 26.0). Checkpoints saved before this change still load, as untied models.
 
 ---
 
@@ -389,7 +392,7 @@ Mini_LLM/
 python -m pytest
 ```
 
-31 fast tests (~15 seconds on CPU, no trained model needed) cover every stage of the pipeline:
+34 fast tests (~15 seconds on CPU, no trained model needed) cover every stage of the pipeline:
 
 * **Tokenizers** — exact BPE round trip including newlines and indentation, `<unk>` handling, save/load
 * **Data** — corpus split, input/target shift, sliding-window stride
@@ -497,10 +500,10 @@ Topics covered include:
 * ✅ Learning-Rate Warmup + Cosine Decay, Gradient Clipping
 * ✅ Model Evaluation (validation perplexity + live samples)
 * ✅ Test Suite (pytest)
+* ✅ Weight Tying (shared token embedding / LM head)
 
 ## Planned
 
-* ⬜ Weight Tying (shared token embedding / LM head)
 * ⬜ Interactive Chat Interface
 
 ---

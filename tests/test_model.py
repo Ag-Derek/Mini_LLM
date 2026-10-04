@@ -62,6 +62,24 @@ def test_forward_shape():
     assert logits.shape == (3, SEQ, VOCAB)
 
 
+def test_weight_tying_shares_one_matrix():
+    torch.manual_seed(0)
+    kwargs = dict(vocab_size=VOCAB, embedding_dim=32, num_heads=4,
+                  num_layers=2, max_seq_length=SEQ)
+    tied = MiniLLM(**kwargs, tie_weights=True)
+    untied = MiniLLM(**kwargs, tie_weights=False)
+
+    assert tied.lm_head.weight is tied.token_embedding.weight
+    count = lambda m: sum(p.numel() for p in m.parameters())
+    assert count(untied) - count(tied) == VOCAB * 32
+
+    # One gradient step on the output side changes the embeddings too.
+    before = tied.token_embedding.weight.detach().clone()
+    tied.lm_head(torch.randn(3, 32)).sum().backward()
+    torch.optim.SGD(tied.parameters(), lr=0.1).step()
+    assert not torch.equal(tied.token_embedding.weight, before)
+
+
 def test_changing_future_tokens_does_not_change_past_logits():
     # The end-to-end version of the causal mask test: if any layer leaked
     # information backwards, editing the last token would change the

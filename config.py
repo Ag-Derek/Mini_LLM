@@ -96,6 +96,11 @@ NUM_HEADS = 4
 # Number of stacked Transformer blocks (transformer.py's TransformerBlocks).
 NUM_LAYERS = 6
 
+# Share the token-embedding matrix with the output layer (lm_head)
+# instead of learning two separate (vocab_size, EMBEDDING_DIM) matrices.
+# Saves ~73K parameters at the current vocab/embedding size.
+TIE_WEIGHTS = True
+
 # Dropout probability, applied to the embeddings (model.py), after
 # attention and inside the feed-forward network (transformer.py).
 DROPOUT = 0.1
@@ -182,6 +187,7 @@ if __name__ == "__main__":
     print("MAX_SEQ_LENGTH:", MAX_SEQ_LENGTH)
     print("NUM_HEADS:", NUM_HEADS)
     print("NUM_LAYERS:", NUM_LAYERS)
+    print("TIE_WEIGHTS:", TIE_WEIGHTS)
     print("DROPOUT:", DROPOUT)
     print("LEARNING_RATE:", LEARNING_RATE)
     print("EPOCHS:", EPOCHS)

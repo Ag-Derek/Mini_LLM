@@ -82,7 +82,11 @@ def load_checkpoint(checkpoint_dir=None, map_location="cpu"):
 
     checkpoint = torch.load(model_path, map_location=map_location)
 
-    model = MiniLLM(**checkpoint["model_config"])
+    # Checkpoints saved before weight tying existed have no "tie_weights"
+    # key and separate embedding / lm_head weights. Loading those into a
+    # tied model would silently let one matrix overwrite the other.
+    model_config = {"tie_weights": False, **checkpoint["model_config"]}
+    model = MiniLLM(**model_config)
     model.load_state_dict(checkpoint["model_state"])
     model.to(map_location)
     model.eval()

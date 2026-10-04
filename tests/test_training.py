@@ -44,11 +44,12 @@ def make_tokenizer(num_merges=20):
     return tok
 
 
-def test_checkpoint_round_trip(tmp_path):
+@pytest.mark.parametrize("tie_weights", [True, False])
+def test_checkpoint_round_trip(tmp_path, tie_weights):
     tok = make_tokenizer()
     model_config = {"vocab_size": tok.vocab_size, "embedding_dim": 32,
                     "num_heads": 4, "num_layers": 2, "max_seq_length": 16,
-                    "dropout": 0.1}
+                    "dropout": 0.1, "tie_weights": tie_weights}
     model = MiniLLM(**model_config).eval()
 
     save_checkpoint(model, model_config, tok, epoch=3, val_loss=1.25,
@@ -59,6 +60,26 @@ def test_checkpoint_round_trip(tmp_path):
     assert not loaded.training  # returned ready for generation
     assert loaded_tok.encode(TEXT) == tok.encode(TEXT)
 
+    ids = torch.tensor([tok.encode(TEXT)[:16]])
+    with torch.no_grad():
+        assert torch.equal(loaded(ids), model(ids))
+    assert (loaded.lm_head.weight is loaded.token_embedding.weight) == tie_weights
+
+
+def test_checkpoint_from_before_weight_tying_loads_untied(tmp_path):
+    # Older checkpoints have no "tie_weights" key and two separate
+    # matrices; they must not be loaded into a tied model.
+    tok = make_tokenizer()
+    model_config = {"vocab_size": tok.vocab_size, "embedding_dim": 32,
+                    "num_heads": 4, "num_layers": 2, "max_seq_length": 16,
+                    "dropout": 0.1}
+    model = MiniLLM(**model_config, tie_weights=False).eval()
+
+    save_checkpoint(model, model_config, tok, epoch=1, val_loss=2.0,
+                    checkpoint_dir=tmp_path)
+    loaded, _, _ = load_checkpoint(tmp_path)
+
+    assert loaded.lm_head.weight is not loaded.token_embedding.weight
     ids = torch.tensor([tok.encode(TEXT)[:16]])
     with torch.no_grad():
         assert torch.equal(loaded(ids), model(ids))

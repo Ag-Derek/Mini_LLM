@@ -57,11 +57,13 @@ class MiniLLM(nn.Module):
     """
 
     def __init__(self, vocab_size, embedding_dim=None, num_heads=None,
-                 num_layers=None, max_seq_length=None, dropout=None):
+                 num_layers=None, max_seq_length=None, dropout=None,
+                 tie_weights=None):
         super().__init__()
         embedding_dim = embedding_dim or config.EMBEDDING_DIM
         max_seq_length = max_seq_length or config.MAX_SEQ_LENGTH
         dropout = config.DROPOUT if dropout is None else dropout
+        tie_weights = config.TIE_WEIGHTS if tie_weights is None else tie_weights
         self.max_seq_length = max_seq_length
 
         self.token_embedding = nn.Embedding(vocab_size, embedding_dim)
@@ -78,6 +80,21 @@ class MiniLLM(nn.Module):
 
         self.final_layer_norm = nn.LayerNorm(embedding_dim)
         self.lm_head = nn.Linear(embedding_dim, vocab_size, bias=False)
+
+        if tie_weights:
+            # Weight tying: the output layer reuses the token-embedding
+            # matrix. Both are (vocab_size, embedding_dim): the embedding
+            # maps token id -> vector, lm_head scores a vector against
+            # every token's row. Sharing one matrix means a token is
+            # predicted when the hidden state looks like its embedding,
+            # and saves vocab_size * embedding_dim parameters.
+            self.lm_head.weight = self.token_embedding.weight
+
+            # nn.Embedding starts at std 1.0, which as output weights would
+            # give huge initial logits. Use GPT-2's std 0.02 instead, and
+            # the same for positions so they don't drown out token identity.
+            nn.init.normal_(self.token_embedding.weight, mean=0.0, std=0.02)
+            nn.init.normal_(self.position_embedding.weight, mean=0.0, std=0.02)
 
     def forward(self, token_ids):
         """

@@ -146,6 +146,7 @@ def main():
         "num_layers": config.NUM_LAYERS,
         "max_seq_length": config.MAX_SEQ_LENGTH,
         "dropout": config.DROPOUT,
+        "tie_weights": config.TIE_WEIGHTS,
     }
     model = MiniLLM(**model_config).to(device)
     loss_fn = nn.CrossEntropyLoss()
