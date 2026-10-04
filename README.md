@@ -77,7 +77,10 @@ Next Token Prediction (568-way logits)
 Training (CrossEntropyLoss + AdamW)
     │
     ▼
-Generated Text  (next up)
+Checkpoint (best val loss)
+    │
+    ▼
+Generated Text  (generate.py)
 ```
 
 ---
@@ -103,9 +106,10 @@ The following components have been implemented from scratch.
 | Final LayerNorm + LM Head           | ✅ Complete |
 | End-to-End Forward Pass (`model.py`)| ✅ Complete |
 | Training Loop (`train.py`)          | ✅ Complete |
-| Text Generation                     | ⏳ In Progress |
+| Model Checkpointing                 | ✅ Complete |
+| Text Generation (`generate.py`)     | ✅ Complete |
 
-Current progress places the project at approximately **85% completion** toward a fully functional GPT-style language model — the architecture and training pipeline are both wired end to end; generation is the remaining piece.
+Current progress places the project at a **working end-to-end GPT-style language model**: train it, save the best checkpoint, and sample text from it. The next phase is improving output quality (longer context, whitespace-aware tokenization, faster training).
 
 ---
 
@@ -300,8 +304,29 @@ A training loop that:
 * Instantiates `MiniLLM`, `CrossEntropyLoss`, and the `AdamW` optimizer
 * Runs a configurable number of epochs, drawing a fresh batch every step
 * Reports training loss and validation loss once per epoch, so overfitting is visible as it happens
+* Saves the model and tokenizer to `checkpoints/` whenever validation loss improves (`checkpoint.py`)
 
 The pipeline was first verified with a single-batch overfit test (training repeatedly on one fixed batch), which confirmed loss collapses from the random-guess baseline (`ln(vocab_size) ≈ 6.34`) toward zero — proving gradients flow correctly through the entire computation graph before committing to a full training run.
+
+---
+
+## Text Generation (`generate.py`)
+
+Loads the best checkpoint saved by `train.py` and continues a prompt one token at a time:
+
+```text
+Prompt -> encode -> [ crop to last MAX_SEQ_LENGTH tokens -> model -> last-position logits
+                      -> temperature / top-k -> sample -> append ] x N -> decode
+```
+
+```bash
+python train.py      # trains and writes checkpoints/
+python generate.py --prompt "ROMEO:" --max-new-tokens 200 --temperature 0.8 --top-k 40
+```
+
+* `--temperature 0` gives greedy decoding; higher values give more varied text
+* `--top-k` restricts sampling to the k most likely tokens (`0` = whole vocabulary)
+* `--seed` makes a sample reproducible
 
 ---
 
@@ -324,9 +349,9 @@ Mini_LLM/
 ├── transformer.py
 ├── model.py
 ├── train.py
+├── checkpoint.py
 ├── generate.py
 ├── config.py
-├── utils.py
 └── README.md
 ```
 
@@ -428,12 +453,12 @@ Topics covered include:
 
 ## In Progress
 
-* ⏳ Text Generation (autoregressive sampling)
+* ✅ Model Checkpointing
+* ✅ Text Generation (autoregressive sampling)
 
 ## Planned
 
 * ⬜ Model Evaluation
-* ⬜ Model Checkpointing
 * ⬜ Interactive Chat Interface
 
 ---

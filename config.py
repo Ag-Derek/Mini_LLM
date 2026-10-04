@@ -103,6 +103,29 @@ EPOCHS = 10
 DATA_DIR = "data"
 CORPUS_FILENAME = "tiny_corpus.txt"
 
+# ---------------------------------------------------------------------------
+# Checkpoints (checkpoint.py)
+# ---------------------------------------------------------------------------
+# Where train.py saves the best model (lowest val loss) and the tokenizer
+# it was trained with, so generate.py can load both without retraining.
+# Resolved relative to the project root, like DATA_DIR.
+CHECKPOINT_DIR = "checkpoints"
+MODEL_CHECKPOINT_FILENAME = "mini_llm.pt"
+TOKENIZER_FILENAME = "tokenizer.json"
+
+# ---------------------------------------------------------------------------
+# Generation (generate.py)
+# ---------------------------------------------------------------------------
+# How many new tokens to sample after the prompt.
+MAX_NEW_TOKENS = 100
+
+# Divides the logits before softmax. < 1.0 makes sampling more
+# conservative, > 1.0 more random, 0 means greedy (always the argmax).
+TEMPERATURE = 0.8
+
+# Only sample from the k most likely tokens (None = full vocabulary).
+TOP_K = 40
+
 # Fraction of the corpus held out for validation. A contiguous split (not
 # shuffled) is used -- see data/corpus.py's train_val_split() -- since
 # shuffling would let the model "see" future context out of order and

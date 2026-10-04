@@ -46,6 +46,7 @@ class MiniLLM(nn.Module):
         embedding_dim = embedding_dim or config.EMBEDDING_DIM
         max_seq_length = max_seq_length or config.MAX_SEQ_LENGTH
         dropout = config.DROPOUT if dropout is None else dropout
+        self.max_seq_length = max_seq_length
 
         self.token_embedding = nn.Embedding(vocab_size, embedding_dim)
         self.position_embedding = nn.Embedding(max_seq_length, embedding_dim)
@@ -78,6 +79,41 @@ class MiniLLM(nn.Module):
         x = self.final_layer_norm(x)
         logits = self.lm_head(x)  # (B, T, vocab_size)
         return logits
+
+    @torch.no_grad()
+    def generate(self, token_ids, max_new_tokens, temperature=1.0, top_k=None):
+        """
+        Autoregressive sampling: predict one token, append it, repeat.
+
+        token_ids:      (batch, seq_len) prompt token ids
+        max_new_tokens: how many tokens to append
+        temperature:    divides the logits; 0 means greedy (argmax)
+        top_k:          if set, sample only from the k most likely tokens
+
+        Returns (batch, seq_len + max_new_tokens). Call model.eval()
+        first so dropout is off.
+        """
+        for _ in range(max_new_tokens):
+            # The position embedding only has max_seq_length rows, so the
+            # model can only ever look at the most recent window of tokens.
+            context = token_ids[:, -self.max_seq_length:]
+
+            # Only the last position's logits predict the *next* token.
+            logits = self(context)[:, -1, :]  # (B, vocab_size)
+
+            if temperature == 0:
+                next_id = logits.argmax(dim=-1, keepdim=True)
+            else:
+                logits = logits / temperature
+                if top_k is not None:
+                    kth_best = torch.topk(logits, min(top_k, logits.size(-1))).values[:, [-1]]
+                    logits = logits.masked_fill(logits < kth_best, float("-inf"))
+                probs = torch.softmax(logits, dim=-1)
+                next_id = torch.multinomial(probs, num_samples=1)  # (B, 1)
+
+            token_ids = torch.cat([token_ids, next_id], dim=1)
+
+        return token_ids
 
 
 # ---------------------------------------------------------------------------
