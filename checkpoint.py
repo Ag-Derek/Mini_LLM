@@ -67,8 +67,8 @@ def load_checkpoint(checkpoint_dir=None, map_location="cpu"):
     Rebuild the model and tokenizer saved by save_checkpoint().
 
     Returns (model, tokenizer, info) where info holds the epoch and
-    val_loss the checkpoint was saved at. The model is returned in
-    eval mode, ready for generation.
+    val_loss the checkpoint was saved at. The model is returned on
+    `map_location` and in eval mode, ready for generation.
     """
     checkpoint_dir = Path(checkpoint_dir or default_checkpoint_dir())
     model_path = checkpoint_dir / config.MODEL_CHECKPOINT_FILENAME
@@ -84,6 +84,7 @@ def load_checkpoint(checkpoint_dir=None, map_location="cpu"):
 
     model = MiniLLM(**checkpoint["model_config"])
     model.load_state_dict(checkpoint["model_state"])
+    model.to(map_location)
     model.eval()
 
     tokenizer = BPETokenizer.load(tokenizer_path)

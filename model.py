@@ -32,6 +32,22 @@ import config
 from transformer import TransformerBlocks
 
 
+def get_device(name=None):
+    """
+    Resolve config.DEVICE (or `name`) to a torch.device. "auto" picks
+    CUDA if available, then Apple-silicon MPS, then CPU.
+    """
+    name = name or config.DEVICE
+    if name == "auto":
+        if torch.cuda.is_available():
+            name = "cuda"
+        elif torch.backends.mps.is_available():
+            name = "mps"
+        else:
+            name = "cpu"
+    return torch.device(name)
+
+
 class MiniLLM(nn.Module):
     """
     End-to-end GPT-style language model.

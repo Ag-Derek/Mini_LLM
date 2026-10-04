@@ -25,6 +25,7 @@ import torch
 
 import config
 from checkpoint import load_checkpoint
+from model import get_device
 
 
 def parse_args():
@@ -48,7 +49,8 @@ def main():
     if args.seed is not None:
         torch.manual_seed(args.seed)
 
-    model, tokenizer, info = load_checkpoint(args.checkpoint_dir)
+    device = get_device()
+    model, tokenizer, info = load_checkpoint(args.checkpoint_dir, map_location=device)
     print(f"Loaded checkpoint from epoch {info['epoch']} "
           f"(val loss {info['val_loss']:.4f})\n")
 
@@ -56,7 +58,7 @@ def main():
     if not prompt_ids:
         raise SystemExit("Prompt produced no tokens -- use a non-empty prompt.")
 
-    token_ids = torch.tensor([prompt_ids], dtype=torch.long)  # (1, prompt_len)
+    token_ids = torch.tensor([prompt_ids], dtype=torch.long, device=device)  # (1, prompt_len)
     output_ids = model.generate(
         token_ids,
         max_new_tokens=args.max_new_tokens,

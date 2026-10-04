@@ -48,20 +48,28 @@ NUM_MERGES = 500
 # ---------------------------------------------------------------------------
 # Dataset (dataset.py)
 # ---------------------------------------------------------------------------
-# How many tokens the model sees per training example.
-CONTEXT_LENGTH = 8
+# How many tokens the model sees per training example. Was 8 (a few
+# words), which is too short to learn anything beyond the next word or
+# two. 128 BPE tokens is ~280 characters of Tiny Shakespeare -- several
+# lines of dialogue, enough to pick up speaker/line structure. Training
+# cost grows faster than linearly with this, so raise it with care on CPU.
+CONTEXT_LENGTH = 128
 
 # How far the sliding window moves each step. stride < context_length
 # means overlapping windows (more training samples from the same text);
-# stride == context_length means no overlap.
-STRIDE = 4
+# stride == context_length means no overlap. Half the context gives every
+# token two different positions in the window per epoch.
+STRIDE = CONTEXT_LENGTH // 2
 
 # Samples per training batch.
-BATCH_SIZE = 4
+BATCH_SIZE = 32
 
 # Fraction of the corpus held out for validation (by character count, on
 # the raw text before tokenizing). 0.1 = 90/10 train/val split -- a
-# reasonable default for a first language-modeling pass.
+# reasonable default for a first language-modeling pass. A contiguous
+# split (not shuffled) is used -- see data/corpus.py's train_val_split()
+# -- since shuffling would let the model "see" future context out of
+# order and defeats the point of a held-out set for a language model.
 VAL_RATIO = 0.1
 
 # ---------------------------------------------------------------------------
@@ -76,8 +84,9 @@ EMBEDDING_DIM = 128
 # ---------------------------------------------------------------------------
 # Longest sequence the model can ever be asked to attend over. This sizes
 # the causal mask buffer in CausalSelfAttentionHead, so it must be >=
-# CONTEXT_LENGTH. Keeping it equal to CONTEXT_LENGTH for now since we
-# don't yet do generation past the training window.
+# CONTEXT_LENGTH. Equal to CONTEXT_LENGTH: the model never trains on
+# positions past the training window, and generation crops its input to
+# the last MAX_SEQ_LENGTH tokens anyway (MiniLLM.generate).
 MAX_SEQ_LENGTH = CONTEXT_LENGTH
 
 # Number of parallel attention heads. EMBEDDING_DIM must be divisible by
@@ -92,10 +101,16 @@ NUM_LAYERS = 6
 DROPOUT = 0.1
 
 # ---------------------------------------------------------------------------
-# Training (future train.py)
+# Training (train.py)
 # ---------------------------------------------------------------------------
-LEARNING_RATE = 3e-4
-EPOCHS = 10
+# 1e-3 is a common choice for a model this small; 3e-4 is the usual
+# default for larger GPTs but learns slowly given how few steps we run.
+LEARNING_RATE = 1e-3
+EPOCHS = 5
+
+# "auto" picks CUDA, then Apple MPS, then CPU. Set to "cpu" / "cuda" /
+# "mps" to force one.
+DEVICE = "auto"
 
 # ---------------------------------------------------------------------------
 # Data paths (data/corpus.py)
@@ -126,12 +141,6 @@ TEMPERATURE = 0.8
 # Only sample from the k most likely tokens (None = full vocabulary).
 TOP_K = 40
 
-# Fraction of the corpus held out for validation. A contiguous split (not
-# shuffled) is used -- see data/corpus.py's train_val_split() -- since
-# shuffling would let the model "see" future context out of order and
-# defeats the point of a held-out set for a language model.
-VAL_RATIO = 0.1
-
 
 if __name__ == "__main__":
     # Quick sanity check: run `python config.py` to print every setting
@@ -156,5 +165,5 @@ if __name__ == "__main__":
     print("DROPOUT:", DROPOUT)
     print("LEARNING_RATE:", LEARNING_RATE)
     print("EPOCHS:", EPOCHS)
-    print("VAL_RATIO:", VAL_RATIO)
+    print("DEVICE:", DEVICE)
     print("Config OK.")

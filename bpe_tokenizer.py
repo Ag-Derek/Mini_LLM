@@ -55,19 +55,17 @@ WHAT THE SANITY CHECK VERIFIES
         v
     Reconstructed Text
 
-Like WordTokenizer, decode(encode(text)) == text is NOT guaranteed:
-whitespace normalization means we can only reconstruct a readable version
-of the text, not the byte-exact original (case IS now preserved -- see
-train()/encode() docstrings). What we do verify is the token-level round
-trip: encode(decode(encode(text))) == encode(text) -- i.e. re-encoding
-the reconstructed text gives back the same token IDs.
+Unlike WordTokenizer, whitespace (spaces AND newlines) is kept as part of
+the tokens, so decode(encode(text)) == text exactly, as long as every
+character in `text` was seen during training. For Tiny Shakespeare this
+matters: line breaks and blank lines between speakers are real structure
+the model should learn to produce.
 
 The sanity check confirms:
 
     - merge learning works (vocab actually grows subword tokens)
     - encoding applies learned merges in the right order
-    - decoding works
-    - token-level round trip holds
+    - exact text round trip holds (whitespace and newlines included)
     - unseen characters are handled correctly (fall back to <unk>)
 
 ===========================================================
@@ -84,14 +82,15 @@ from tokenizer import Tokenizer
 
 class BPETokenizer(Tokenizer):
     """
-    Byte-Pair-Encoding tokenizer (character-level BPE, word-bounded).
+    Byte-Pair-Encoding tokenizer (character-level BPE, chunk-bounded).
 
     Training:
-        1. Split text into "words" using the same word/punctuation
-           pattern as WordTokenizer (so punctuation never merges across
-           a word boundary).
-        2. Represent each word as a list of characters plus an
-           end-of-word marker (EOW), e.g. "cat" -> ["c", "a", "t", "</w>"].
+        1. Split text into chunks GPT-2 style: a word or punctuation run
+           together with its leading space (" cat", " ,"), or a run of
+           whitespace such as "\n\n". Merges never cross a chunk
+           boundary, so a token can't straddle two words.
+        2. Represent each chunk as a list of characters,
+           e.g. " cat" -> [" ", "c", "a", "t"].
         3. Repeatedly find the most frequent adjacent symbol pair across
            the whole corpus and merge it into a single new symbol.
            Each merge is recorded, in order, in self.merges.
@@ -108,18 +107,23 @@ class BPETokenizer(Tokenizer):
     known characters still encode, usually as multiple subword tokens.
     """
 
-    # One or more word chars, OR a single non-space/non-word char.
-    # Same pattern as WordTokenizer so punctuation is always its own unit.
-    _WORD_PATTERN = re.compile(r"\w+|[^\w\s]")
-
-    # Marks the end of a word so merges never cross word boundaries and
-    # so decode() can tell where one word ends and the next begins.
-    EOW = "</w>"
+    # Same idea as GPT-2's pre-tokenizer, in order of preference:
+    #   " ?\w+"         a word, with its leading space if it has one
+    #   " ?[^\w\s]+"    a run of punctuation, with its leading space
+    #   "\s+(?!\S)"     whitespace, leaving the last space for the next word
+    #   "\s+"           any remaining whitespace (e.g. a trailing newline)
+    # Every character of the input lands in exactly one chunk, which is
+    # what makes decode() an exact inverse of encode().
+    _CHUNK_PATTERN = re.compile(r" ?\w+| ?[^\w\s]+|\s+(?!\S)|\s+")
 
     def __init__(self):
         self.stoi: dict[str, int] = {}                 # string -> int
         self.itos: dict[int, str] = {}                 # int -> string
         self.merges: dict[tuple[str, str], int] = {}   # pair -> rank (learned order)
+        # chunk -> token ids. The same chunks (" the", "\n") repeat
+        # constantly, so replaying merges once per distinct chunk instead
+        # of once per occurrence makes encoding a large corpus far faster.
+        self._encode_cache: dict[str, list[int]] = {}
 
     # ---------------------------------------------------------------
     # training
@@ -141,13 +145,13 @@ class BPETokenizer(Tokenizer):
         language model can learn from. The tradeoff is a larger vocab,
         since "the" and "The" now train as distinct symbol sequences.
         """
-        words = self._WORD_PATTERN.findall(text)
+        words = self._CHUNK_PATTERN.findall(text)
 
         word_freqs = Counter(words)
 
-        # Each distinct word starts as a list of its characters + EOW.
+        # Each distinct chunk starts as a list of its characters.
         splits: dict[str, list[str]] = {
-            word: list(word) + [self.EOW] for word in word_freqs
+            word: list(word) for word in word_freqs
         }
 
         # Track every symbol that ever exists during training, not just
@@ -159,11 +163,11 @@ class BPETokenizer(Tokenizer):
         # merge. Encoding an unseen word like "throw" would then produce
         # "th" via _apply_merges but find it missing from stoi and fall
         # back to <unk>, silently wasting a merge the model actually
-        # learned. Seeding with base characters + EOW up front, then
-        # adding each merge's output the moment it's created, means every
-        # symbol that was ever a valid subword stays in the vocab.
+        # learned. Seeding with base characters up front, then adding each
+        # merge's output the moment it's created, means every symbol that
+        # was ever a valid subword stays in the vocab.
         base_chars = {ch for word in word_freqs for ch in word}
-        all_symbols: set[str] = set(base_chars) | {self.EOW}
+        all_symbols: set[str] = set(base_chars)
 
         merges_in_order: list[tuple[str, str]] = []
 
@@ -188,6 +192,7 @@ class BPETokenizer(Tokenizer):
 
         self.stoi = {tok: i for i, tok in enumerate(vocab)}
         self.itos = {i: tok for i, tok in enumerate(vocab)}
+        self._encode_cache = {}
 
     @staticmethod
     def _count_pairs(
@@ -243,61 +248,38 @@ class BPETokenizer(Tokenizer):
 
     def encode(self, text: str) -> list[int]:
         """
-        Convert text into token IDs. Text is split into word/punctuation
-        units (same pattern as WordTokenizer) preserving case, each unit
-        is broken into characters + EOW, learned merges are replayed, and
-        the resulting subword symbols are looked up. A symbol never seen
-        during training (i.e. not produced by any merge and not a base
-        character in the vocab) maps to <unk>.
+        Convert text into token IDs. Text is split into chunks with the
+        same pattern as train() (words keep their leading space,
+        whitespace runs are their own chunks), each chunk is broken into
+        characters, learned merges are replayed, and the resulting
+        subword symbols are looked up. A symbol never seen during
+        training (i.e. not produced by any merge and not a base character
+        in the vocab) maps to <unk>.
 
         Case is preserved to match train() -- see its docstring. This
         means a word's case must match training for merges to apply the
         same way: "Romeo" and "ROMEO" are different symbol sequences
         unless both appeared during training.
         """
-        words = self._WORD_PATTERN.findall(text)
-
         ids: list[int] = []
         unk_id = self.stoi[config.UNK_TOKEN]
-        for word in words:
-            symbols = self._apply_merges(list(word) + [self.EOW])
-            for symbol in symbols:
-                ids.append(self.stoi.get(symbol, unk_id))
+        for chunk in self._CHUNK_PATTERN.findall(text):
+            chunk_ids = self._encode_cache.get(chunk)
+            if chunk_ids is None:
+                symbols = self._apply_merges(list(chunk))
+                chunk_ids = [self.stoi.get(symbol, unk_id) for symbol in symbols]
+                self._encode_cache[chunk] = chunk_ids
+            ids.extend(chunk_ids)
         return ids
 
     def decode(self, ids: list[int]) -> str:
         """
-        Join subword tokens back into a readable string. Symbols are
-        stitched together within a word using the EOW marker to find
-        word boundaries, then words are joined the same way
-        WordTokenizer does: punctuation glued to the previous word, a
-        space everywhere else. Best-effort reconstruction, not the exact
-        original text/whitespace.
+        Join subword tokens back into a string. Every token already
+        carries its own whitespace (" the", "\\n"), so this is a plain
+        concatenation, and decode(encode(text)) == text whenever every
+        character in `text` was seen during training.
         """
-        no_space_before = set(".,!?;:')]}\"'")
-
-        tokens = [self.itos[i] for i in ids]
-
-        words: list[str] = []
-        buf = ""
-        for tok in tokens:
-            if tok.endswith(self.EOW):
-                buf += tok[: -len(self.EOW)]
-                words.append(buf)
-                buf = ""
-            else:
-                buf += tok
-        if buf:
-            words.append(buf)
-
-        pieces: list[str] = []
-        for w in words:
-            glue = len(w) == 1 and w in no_space_before
-            if pieces and not glue:
-                pieces.append(" ")
-            pieces.append(w)
-
-        return "".join(pieces)
+        return "".join(self.itos[i] for i in ids)
 
     @property
     def vocab_size(self) -> int:
@@ -356,12 +338,10 @@ if __name__ == "__main__":
     decoded = tok.decode(ids)
     print(f"decoded: {decoded}")
 
-    # Exact string round-trip isn't guaranteed (we normalize whitespace),
-    # so check the token-level round trip instead: re-encoding the
-    # decoded text should give back the same IDs.
-    re_ids = tok.encode(decoded)
-    assert re_ids == ids, "Token-level round-trip failed!"
-    print("Token round-trip OK.")
+    # Whitespace (including newlines and indentation) is part of the
+    # tokens, so decoding must give back the exact original string.
+    assert decoded == sample, "Exact round-trip failed!"
+    print("Exact round-trip OK.")
 
     # Test unseen-word handling: these words never appeared in training,
     # but they're built entirely from known characters, so BPE can still

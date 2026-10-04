@@ -71,7 +71,7 @@ Final LayerNorm
 Language Model Head
     │
     ▼
-Next Token Prediction (568-way logits)
+Next Token Prediction (569-way logits)
     │
     ▼
 Training (CrossEntropyLoss + AdamW)
@@ -109,7 +109,7 @@ The following components have been implemented from scratch.
 | Model Checkpointing                 | ✅ Complete |
 | Text Generation (`generate.py`)     | ✅ Complete |
 
-Current progress places the project at a **working end-to-end GPT-style language model**: train it, save the best checkpoint, and sample text from it. The next phase is improving output quality (longer context, whitespace-aware tokenization, faster training).
+The project is now a **working end-to-end GPT-style language model**: train it, save the best checkpoint, and sample text from it. It trains on 128-token windows with a whitespace-preserving tokenizer, so generated text keeps Shakespeare's line and speaker structure. The next phase is training quality (learning-rate schedule, gradient clipping, evaluation metrics).
 
 ---
 
@@ -119,7 +119,8 @@ Current progress places the project at a **working end-to-end GPT-style language
 
 * Character-level tokenizer
 * Word-level tokenizer
-* Byte Pair Encoding (BPE), trained on the real corpus (568-token vocabulary at 500 merges)
+* Byte Pair Encoding (BPE), trained on the real corpus (569-token vocabulary at 500 merges)
+* GPT-2-style pre-tokenization: words keep their leading space (`" the"`), and newlines are tokens, so `decode(encode(text)) == text` exactly
 * Case preserved (not lowercased) so character names and sentence starts carry signal
 * Automatic vocabulary construction
 * Token-to-ID and ID-to-token mapping
@@ -281,15 +282,15 @@ Current configuration:
 
 | Setting              | Value       |
 | --------------------- | ----------- |
-| Vocabulary size       | 568         |
+| Vocabulary size       | 569         |
 | Embedding dimension   | 128         |
 | Attention heads        | 4           |
 | Dimensions per head    | 32          |
 | Transformer layers    | 6           |
-| Max sequence length   | 8           |
+| Max sequence length   | 128         |
 | Dropout                | 0.1         |
 | FFN expansion          | 4×          |
-| Total parameters       | ~1.33M      |
+| Total parameters       | ~1.35M      |
 
 The end-to-end forward pass has been verified — a batch of token IDs of shape `(batch, seq_len)` produces logits of shape `(batch, seq_len, vocab_size)`.
 
@@ -303,6 +304,8 @@ A training loop that:
 * Builds train and validation `DataLoader`s
 * Instantiates `MiniLLM`, `CrossEntropyLoss`, and the `AdamW` optimizer
 * Runs a configurable number of epochs, drawing a fresh batch every step
+* Takes every hyperparameter from `config.py` (128-token context, batch size 32, learning rate 1e-3, 5 epochs)
+* Runs on CUDA, Apple MPS, or CPU automatically (`config.DEVICE = "auto"`)
 * Reports training loss and validation loss once per epoch, so overfitting is visible as it happens
 * Saves the model and tokenizer to `checkpoints/` whenever validation loss improves (`checkpoint.py`)
 
