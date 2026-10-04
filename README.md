@@ -347,6 +347,20 @@ python generate.py --prompt "ROMEO:" --max-new-tokens 200 --temperature 0.8 --to
 * `--top-k` restricts sampling to the k most likely tokens (`0` = whole vocabulary)
 * `--seed` makes a sample reproducible
 
+**Interactive mode** loads the model once and keeps continuing prompts until you type `quit`:
+
+```text
+$ python generate.py --interactive --max-new-tokens 40
+> JULIET:\nO Romeo
+JULIET:
+O Romeoly, believed without the king!
+
+ROMEO:
+I have been to the
+```
+
+Type `\n` for a line break, since the model learned Shakespeare as `SPEAKER:` on its own line followed by the speech. This is text continuation, not chat: a model trained only on plays continues your prompt as the next lines of a play, and each prompt starts fresh.
+
 ---
 
 # Repository Structure
@@ -376,7 +390,8 @@ Mini_LLM/
 │   ├── test_tokenizers.py
 │   ├── test_data.py
 │   ├── test_model.py
-│   └── test_training.py
+│   ├── test_training.py
+│   └── test_generate.py
 │
 ├── checkpoints/        (created by train.py, git-ignored)
 ├── requirements.txt
@@ -392,13 +407,14 @@ Mini_LLM/
 python -m pytest
 ```
 
-34 fast tests (~15 seconds on CPU, no trained model needed) cover every stage of the pipeline:
+39 fast tests (~15 seconds on CPU, no trained model needed) cover every stage of the pipeline:
 
 * **Tokenizers** — exact BPE round trip including newlines and indentation, `<unk>` handling, save/load
 * **Data** — corpus split, input/target shift, sliding-window stride
 * **Model** — `MyEmbedding` vs `nn.Embedding`, causal mask, a check that editing a future token never changes earlier predictions, generation past the context window, greedy decoding
 * **Single-batch overfit** — a tiny model memorizes one batch, proving gradients reach every layer
 * **Training** — warmup + cosine LR schedule, checkpoint save/reload, tokenizer reuse
+* **Generation** — prompt continuation and the interactive loop (multiple prompts, `\n` line breaks, clean exit)
 
 ---
 
@@ -501,10 +517,11 @@ Topics covered include:
 * ✅ Model Evaluation (validation perplexity + live samples)
 * ✅ Test Suite (pytest)
 * ✅ Weight Tying (shared token embedding / LM head)
+* ✅ Interactive Prompt Mode (`generate.py --interactive`)
 
 ## Planned
 
-* ⬜ Interactive Chat Interface
+* ⬜ Larger model (256-dim, 8 heads, 6 layers) trained on a GPU
 
 ---
 
