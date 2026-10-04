@@ -108,6 +108,7 @@ The following components have been implemented from scratch.
 | Training Loop (`train.py`)          | ✅ Complete |
 | Model Checkpointing                 | ✅ Complete |
 | Text Generation (`generate.py`)     | ✅ Complete |
+| Web Interface (`app.py`)            | ✅ Complete |
 
 The project is now a **working end-to-end GPT-style language model**: train it, save the best checkpoint, and sample text from it. It trains on 128-token windows with a whitespace-preserving tokenizer, so generated text keeps Shakespeare's line and speaker structure. Training uses a warmup + cosine learning-rate schedule and gradient clipping, and reports validation perplexity and live samples as it goes.
 
@@ -363,6 +364,26 @@ Type `\n` for a line break, since the model learned Shakespeare as `SPEAKER:` on
 
 ---
 
+## Web Interface (`app.py`)
+
+A browser page for the same model, served by Python's standard library (nothing extra to install):
+
+```bash
+python app.py                # then open http://127.0.0.1:8000
+python app.py --port 8080 --checkpoint-dir checkpoints/untied_baseline
+```
+
+* Type a prompt with real line breaks, or start from one of the example prompts (`ROMEO:`, `First Citizen:`, ...)
+* Sliders for temperature, top-k and length, plus an optional seed for reproducible text
+* The output shows your prompt and the generated text in different colors
+* **Continue** generates more text after the current output. Only the last part is sent, since the model only sees its last 128 tokens anyway
+* A history of the session's generations; click one to show it again
+* Shows the loaded checkpoint's parameters, validation loss and device
+
+The model is loaded once when the server starts and generates on request (`POST /api/generate`), using the same `continue_text()` as `generate.py`. The server listens only on `127.0.0.1` unless `--host` says otherwise.
+
+---
+
 # Repository Structure
 
 ```text
@@ -384,6 +405,9 @@ Mini_LLM/
 ├── train.py
 ├── checkpoint.py
 ├── generate.py
+├── app.py              (web interface server)
+├── web/
+│   └── index.html
 ├── config.py
 │
 ├── tests/
@@ -391,7 +415,8 @@ Mini_LLM/
 │   ├── test_data.py
 │   ├── test_model.py
 │   ├── test_training.py
-│   └── test_generate.py
+│   ├── test_generate.py
+│   └── test_app.py
 │
 ├── checkpoints/        (created by train.py, git-ignored)
 ├── requirements.txt
@@ -407,7 +432,7 @@ Mini_LLM/
 python -m pytest
 ```
 
-39 fast tests (~15 seconds on CPU, no trained model needed) cover every stage of the pipeline:
+55 fast tests (~15 seconds on CPU, no trained model needed) cover every stage of the pipeline:
 
 * **Tokenizers** — exact BPE round trip including newlines and indentation, `<unk>` handling, save/load
 * **Data** — corpus split, input/target shift, sliding-window stride
@@ -415,6 +440,7 @@ python -m pytest
 * **Single-batch overfit** — a tiny model memorizes one batch, proving gradients reach every layer
 * **Training** — warmup + cosine LR schedule, checkpoint save/reload, tokenizer reuse
 * **Generation** — prompt continuation and the interactive loop (multiple prompts, `\n` line breaks, clean exit)
+* **Web interface** — request validation, and a real HTTP server on a free port: page, model info, generation, seeded reproducibility, error replies
 
 ---
 
@@ -518,6 +544,7 @@ Topics covered include:
 * ✅ Test Suite (pytest)
 * ✅ Weight Tying (shared token embedding / LM head)
 * ✅ Interactive Prompt Mode (`generate.py --interactive`)
+* ✅ Web Interface (`app.py`)
 
 ## Planned
 

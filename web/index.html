@@ -1,0 +1,405 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mini LLM</title>
+<style>
+  :root {
+    --bg: #f6f4ef;
+    --surface: #ffffff;
+    --surface-2: #efece4;
+    --text: #1f1d1a;
+    --muted: #6b665d;
+    --border: #dcd7cc;
+    --accent: #7a3b2e;
+    --accent-text: #ffffff;
+    --gen: #7a3b2e;
+    --error: #a3271b;
+    --error-bg: #fbe9e6;
+    --focus: #c4703a;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #171614;
+      --surface: #201f1c;
+      --surface-2: #2a2824;
+      --text: #ece8df;
+      --muted: #a39d92;
+      --border: #3a3732;
+      --accent: #e0a17f;
+      --accent-text: #1b1a17;
+      --gen: #eeb08e;
+      --error: #ff9b8c;
+      --error-bg: #3a1f1b;
+      --focus: #e0a17f;
+      color-scheme: dark;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  .page { max-width: 1080px; margin: 0 auto; padding: 24px 16px 48px; }
+
+  header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; margin-bottom: 20px; }
+  h1 { font: 600 22px/1.2 Georgia, "Times New Roman", serif; margin: 0; letter-spacing: 0.01em; }
+  .stats { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+  .stats b { color: var(--text); font-weight: 600; }
+
+  .layout { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 20px; align-items: start; }
+  @media (max-width: 820px) { .layout { grid-template-columns: minmax(0, 1fr); } }
+
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+  .card + .card { margin-top: 16px; }
+  .card h2 { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 0 0 10px; }
+
+  textarea {
+    width: 100%; min-height: 110px; resize: vertical;
+    padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--bg); color: var(--text);
+    font: 15px/1.5 Georgia, "Times New Roman", serif;
+  }
+  textarea:focus, input:focus, button:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 14px; }
+  .chip {
+    border: 1px solid var(--border); background: var(--surface-2); color: var(--text);
+    border-radius: 999px; padding: 3px 10px; font-size: 13px; cursor: pointer;
+  }
+  .chip:hover { border-color: var(--accent); }
+
+  .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  button {
+    font: inherit; cursor: pointer; border-radius: 8px; padding: 8px 14px;
+    border: 1px solid var(--border); background: var(--surface-2); color: var(--text);
+  }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
+  button:disabled { opacity: 0.55; cursor: default; }
+  .hint { color: var(--muted); font-size: 12px; }
+  .hint kbd { font: 11px ui-monospace, Consolas, monospace; border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; }
+
+  .output {
+    min-height: 160px; margin: 0; padding: 14px 16px; border-radius: 8px;
+    background: var(--bg); border: 1px solid var(--border);
+    font: 16px/1.6 Georgia, "Times New Roman", serif;
+    white-space: pre-wrap; overflow-wrap: anywhere;
+  }
+  .output .prompt { color: var(--text); }
+  .output .gen { color: var(--gen); }
+  .output .placeholder { color: var(--muted); font-style: italic; }
+  .output-meta { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; margin-top: 10px; }
+  .legend { display: flex; gap: 12px; color: var(--muted); font-size: 12px; align-items: center; }
+  .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+
+  .error { display: none; margin-top: 10px; padding: 8px 12px; border-radius: 8px; background: var(--error-bg); color: var(--error); font-size: 14px; }
+  .error.show { display: block; }
+
+  .setting { margin-bottom: 14px; }
+  .setting label { display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 4px; }
+  .setting output, .setting .value { font-variant-numeric: tabular-nums; color: var(--muted); }
+  .setting input[type=range] { width: 100%; accent-color: var(--accent); }
+  .setting input[type=number] {
+    width: 100%; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--border);
+    background: var(--bg); color: var(--text); font: inherit;
+  }
+  .setting p { margin: 2px 0 0; color: var(--muted); font-size: 12px; }
+
+  .history { list-style: none; margin: 0; padding: 0; max-height: 340px; overflow-y: auto; }
+  .history li + li { margin-top: 6px; }
+  .history button {
+    width: 100%; text-align: left; padding: 8px 10px; background: var(--bg);
+    display: block; font-size: 13px;
+  }
+  .history .snippet { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: Georgia, serif; }
+  .history .meta { display: block; color: var(--muted); font-size: 11px; margin-top: 2px; }
+  .empty { color: var(--muted); font-size: 13px; margin: 0; }
+
+  .spinner {
+    display: inline-block; width: 12px; height: 12px; border-radius: 50%;
+    border: 2px solid currentColor; border-right-color: transparent;
+    animation: spin 0.8s linear infinite; vertical-align: -2px; margin-right: 6px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
+</style>
+</head>
+<body>
+<div class="page">
+  <header>
+    <h1>Mini LLM</h1>
+    <div class="stats" id="stats">Loading model info…</div>
+  </header>
+
+  <div class="layout">
+    <main>
+      <section class="card">
+        <h2><label for="prompt">Prompt</label></h2>
+        <textarea id="prompt" spellcheck="false" placeholder="ROMEO:&#10;">ROMEO:
+</textarea>
+        <div class="chips" aria-label="Example prompts">
+          <button class="chip" data-prompt="ROMEO:&#10;">ROMEO:</button>
+          <button class="chip" data-prompt="JULIET:&#10;O Romeo, Romeo,">JULIET: O Romeo</button>
+          <button class="chip" data-prompt="First Citizen:&#10;">First Citizen:</button>
+          <button class="chip" data-prompt="KING RICHARD III:&#10;Now is the">KING RICHARD III</button>
+          <button class="chip" data-prompt="To be, or not to be,">To be, or not to be</button>
+        </div>
+        <div class="actions">
+          <button class="primary" id="generate">Generate</button>
+          <span class="hint"><kbd>Ctrl</kbd> + <kbd>Enter</kbd></span>
+        </div>
+        <div class="error" id="error" role="alert"></div>
+      </section>
+
+      <section class="card">
+        <h2>Output</h2>
+        <pre class="output" id="output" aria-live="polite"><span class="placeholder">The model's continuation will appear here.</span></pre>
+        <div class="output-meta">
+          <div class="legend">
+            <span><span class="swatch" style="background: var(--text)"></span>Your prompt</span>
+            <span><span class="swatch" style="background: var(--gen)"></span>Generated</span>
+            <span id="timing"></span>
+          </div>
+          <div class="actions">
+            <button id="continue" disabled title="Generate more text after the current output">Continue</button>
+            <button id="use" disabled title="Copy the whole output into the prompt box">Use as prompt</button>
+            <button id="copy" disabled>Copy</button>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <aside>
+      <section class="card">
+        <h2>Settings</h2>
+        <div class="setting">
+          <label for="temperature">Temperature <output id="temperature-value"></output></label>
+          <input type="range" id="temperature" min="0" max="2" step="0.05">
+          <p>0 always picks the most likely token. Higher is more varied.</p>
+        </div>
+        <div class="setting">
+          <label for="top_k">Top-k <output id="top_k-value"></output></label>
+          <input type="range" id="top_k" min="0" max="200" step="1">
+          <p>Sample only from the k most likely tokens. 0 = all.</p>
+        </div>
+        <div class="setting">
+          <label for="max_new_tokens">Length <output id="max_new_tokens-value"></output></label>
+          <input type="range" id="max_new_tokens" min="10" max="500" step="10">
+          <p>New tokens to generate (a token is ~2 characters).</p>
+        </div>
+        <div class="setting">
+          <label for="seed">Seed <span class="value">optional</span></label>
+          <input type="number" id="seed" min="0" step="1" placeholder="random">
+          <p>Same seed + same settings = same text.</p>
+        </div>
+        <button id="reset">Reset to defaults</button>
+      </section>
+
+      <section class="card">
+        <h2>History</h2>
+        <ul class="history" id="history"></ul>
+        <p class="empty" id="history-empty">Generations from this session will be listed here.</p>
+      </section>
+    </aside>
+  </div>
+</div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const sliders = ["temperature", "top_k", "max_new_tokens"];
+
+  // The model only ever sees its last `context_length` tokens, so when
+  // continuing a long passage we only send its tail as the prompt.
+  const CONTINUE_TAIL_CHARS = 1000;
+
+  let defaults = { temperature: 0.8, top_k: 40, max_new_tokens: 100 };
+  let segments = [];   // [{text, gen: bool}] currently shown in the output
+  let history = [];
+  let busy = false;
+
+  // ---- settings ---------------------------------------------------------
+  function showValue(id) {
+    const v = $(id).value;
+    $(id + "-value").textContent = id === "top_k" && v === "0" ? "all" : v;
+  }
+  function applyDefaults() {
+    for (const id of sliders) { $(id).value = defaults[id]; showValue(id); }
+    $("seed").value = "";
+  }
+  for (const id of sliders) $(id).addEventListener("input", () => showValue(id));
+  $("reset").addEventListener("click", applyDefaults);
+
+  function settings() {
+    const s = {};
+    for (const id of sliders) s[id] = Number($(id).value);
+    if ($("seed").value !== "") s.seed = Number($("seed").value);
+    return s;
+  }
+
+  // ---- model info -------------------------------------------------------
+  fetch("/api/info").then((r) => r.json()).then((info) => {
+    defaults = info.defaults;
+    $("max_new_tokens").max = info.limits.max_new_tokens;
+    $("prompt").maxLength = info.limits.prompt_chars;
+    applyDefaults();
+    const params = (info.parameters / 1e6).toFixed(2) + "M";
+    $("stats").innerHTML = "";
+    const parts = [
+      ["params", params], ["vocab", info.vocab_size], ["context", info.context_length + " tokens"],
+      ["val loss", info.val_loss.toFixed(4)], ["epoch", info.epoch], ["device", info.device],
+    ];
+    parts.forEach(([label, value], i) => {
+      if (i) $("stats").append(" · ");
+      const b = document.createElement("b");
+      b.textContent = value;
+      $("stats").append(label + " ", b);
+    });
+  }).catch(() => {
+    applyDefaults();
+    $("stats").textContent = "Couldn't reach the server. Is app.py running?";
+  });
+
+  // ---- output -----------------------------------------------------------
+  function render() {
+    const out = $("output");
+    out.textContent = "";
+    for (const seg of segments) {
+      const span = document.createElement("span");
+      span.className = seg.gen ? "gen" : "prompt";
+      span.textContent = seg.text;
+      out.append(span);
+    }
+    const has = segments.length > 0;
+    for (const id of ["continue", "use", "copy"]) $(id).disabled = !has || busy;
+  }
+  const fullText = () => segments.map((s) => s.text).join("");
+
+  function showError(msg) {
+    $("error").textContent = msg || "";
+    $("error").classList.toggle("show", Boolean(msg));
+  }
+
+  function setBusy(on) {
+    busy = on;
+    $("generate").disabled = on;
+    $("generate").innerHTML = on ? '<span class="spinner"></span>Generating…' : "Generate";
+    render();
+  }
+
+  async function request(prompt) {
+    const res = await fetch("/api/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt, ...settings() }),
+    });
+    const data = await res.json().catch(() => ({ error: "The server sent an unreadable reply." }));
+    if (!res.ok) throw new Error(data.error || "Generation failed.");
+    return data;
+  }
+
+  async function generate() {
+    if (busy) return;
+    const prompt = $("prompt").value;
+    showError("");
+    setBusy(true);
+    try {
+      const data = await request(prompt);
+      segments = [{ text: data.prompt, gen: false }, { text: data.continuation, gen: true }];
+      finish(data, false);
+    } catch (err) {
+      showError(err.message === "Failed to fetch" ? "Couldn't reach the server. Is app.py running?" : err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function continueOutput() {
+    if (busy || !segments.length) return;
+    showError("");
+    setBusy(true);
+    try {
+      const tail = fullText().slice(-CONTINUE_TAIL_CHARS);
+      const data = await request(tail);
+      segments.push({ text: data.continuation, gen: true });
+      finish(data, true);
+    } catch (err) {
+      showError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function finish(data, continued) {
+    $("timing").textContent = `${data.new_tokens} tokens in ${data.seconds.toFixed(2)}s`;
+    addHistory(continued);
+  }
+
+  // ---- history ----------------------------------------------------------
+  function addHistory(continued) {
+    const s = settings();
+    history.unshift({
+      segments: segments.map((x) => ({ ...x })),
+      meta: (continued ? "continued · " : "") + `temp ${s.temperature} · top-k ${s.top_k || "all"} · ${s.max_new_tokens} tokens` +
+            (s.seed !== undefined ? ` · seed ${s.seed}` : ""),
+      time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+    });
+    history = history.slice(0, 30);
+    renderHistory();
+  }
+
+  function renderHistory() {
+    const list = $("history");
+    list.textContent = "";
+    $("history-empty").style.display = history.length ? "none" : "";
+    history.forEach((item) => {
+      const li = document.createElement("li");
+      const btn = document.createElement("button");
+      const snippet = document.createElement("span");
+      snippet.className = "snippet";
+      snippet.textContent = item.segments.map((x) => x.text).join("").replace(/\s+/g, " ").trim();
+      const meta = document.createElement("span");
+      meta.className = "meta";
+      meta.textContent = `${item.time} · ${item.meta}`;
+      btn.append(snippet, meta);
+      btn.title = "Show this output again";
+      btn.addEventListener("click", () => {
+        segments = item.segments.map((x) => ({ ...x }));
+        $("timing").textContent = "";
+        render();
+      });
+      li.append(btn);
+      list.append(li);
+    });
+  }
+
+  // ---- wiring -----------------------------------------------------------
+  $("generate").addEventListener("click", generate);
+  $("continue").addEventListener("click", continueOutput);
+  $("use").addEventListener("click", () => { $("prompt").value = fullText(); $("prompt").focus(); });
+  $("copy").addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(fullText());
+      $("copy").textContent = "Copied";
+      setTimeout(() => ($("copy").textContent = "Copy"), 1200);
+    } catch { showError("Couldn't copy to the clipboard."); }
+  });
+  $("prompt").addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); generate(); }
+  });
+  document.querySelectorAll(".chip").forEach((chip) =>
+    chip.addEventListener("click", () => {
+      $("prompt").value = chip.dataset.prompt;
+      $("prompt").focus();
+    }));
+
+  renderHistory();
+})();
+</script>
+</body>
+</html>
