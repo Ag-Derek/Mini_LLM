@@ -121,6 +121,15 @@ EPOCHS = 10
 WARMUP_STEPS = 100
 MIN_LR = LEARNING_RATE / 10
 
+# AdamW settings, following GPT-2/3. Weight decay pulls weights toward
+# zero a little every step, which discourages memorizing the training
+# text. It only applies to weight matrices (embeddings, Linear weights):
+# decaying LayerNorm gains and biases just fights the job they do.
+# beta2 = 0.95 (instead of the default 0.999) lets Adam's per-weight
+# step-size estimate adapt faster, which is more stable for transformers.
+WEIGHT_DECAY = 0.1
+BETAS = (0.9, 0.95)
+
 # Rescale the gradients whenever their global L2 norm exceeds this, so a
 # single bad batch can't produce one huge destabilizing update.
 GRAD_CLIP = 1.0

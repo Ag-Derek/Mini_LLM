@@ -296,6 +296,10 @@ Current configuration:
 
 The end-to-end forward pass has been verified — a batch of token IDs of shape `(batch, seq_len)` produces logits of shape `(batch, seq_len, vocab_size)`.
 
+**Initialization** follows GPT-2: every Linear and Embedding weight starts as N(0, 0.02) with zero biases, and the two layers in each block that add back into the residual stream (attention's output projection and the FFN's second Linear) start smaller, at 0.02 / √(2 × layers). Without that scaling, each of the 2 × layers additions grows the residual stream, and deeper models start training from a worse place.
+
+Adding GPT-2 initialization and the GPT-style AdamW settings (see Training) together made **no measurable difference at this size**: the same 10-epoch run reached 2.2453 bits per character (val loss 3.2616), against 2.2418 (3.2564) before, a difference too small to read anything into from one run of each. The new run learned faster early on (val loss 3.99 vs 4.13 at step 300) but ended in the same place. Both are standard practice and matter more as models get deeper and train longer, so they're kept; the earlier model is in `checkpoints/tied_baseline/` for comparison.
+
 **Weight tying** (`config.TIE_WEIGHTS`): the LM head reuses the token-embedding matrix instead of learning its own. Both are `(vocab_size, embedding_dim)`, so one matrix serves both directions: a token is predicted when the final hidden state looks like that token's embedding. This saves 72,832 parameters and, over the same 10-epoch run, lowered the best validation loss from 3.308 to 3.256 (perplexity 27.3 → 26.0). Checkpoints saved before this change still load, as untied models.
 
 ---
@@ -306,24 +310,26 @@ A training loop that:
 
 * Loads and tokenizes the Tiny Shakespeare corpus, reusing the tokenizer saved in `checkpoints/` when it matches the config (skips ~50s of BPE training)
 * Builds train and validation `DataLoader`s
-* Instantiates `MiniLLM`, `CrossEntropyLoss`, and the `AdamW` optimizer
+* Instantiates `MiniLLM`, `CrossEntropyLoss`, and the `AdamW` optimizer with GPT-style settings: weight decay 0.1 on weight matrices only (LayerNorm gains and biases are left alone) and `betas=(0.9, 0.95)`
 * Runs a configurable number of epochs, drawing a fresh batch every step
 * Uses a learning-rate schedule: linear warmup over the first 100 steps to a peak of 1e-3, then cosine decay to 1e-4
 * Clips the global gradient norm to 1.0 so one bad batch can't derail training
 * Takes every hyperparameter from `config.py` (128-token context, batch size 32, 10 epochs)
 * Runs on CUDA, Apple MPS, or CPU automatically (`config.DEVICE = "auto"`)
-* Every 100 steps reports train loss, validation loss and **perplexity** (`exp(val_loss)`), plus a short sample from the prompt `ROMEO:`, so you can watch the text improve
+* Every 100 steps reports train loss, validation loss, **perplexity** (`exp(val_loss)`) and **bits per character**, plus a short sample from the prompt `ROMEO:`, so you can watch the text improve
 * Saves the model and tokenizer to `checkpoints/` whenever validation loss improves (`checkpoint.py`)
 
 ```text
-  Step | Epoch |       LR | Train Loss | Val Loss |  Val PPL
---------------------------------------------------------------
-   300 |     1 | 4.33e-04 |     4.3947 |   4.1325 |    62.33  <- saved
+  Step | Epoch |       LR | Train Loss | Val Loss |  Val PPL | Val BPC
+------------------------------------------------------------------------
+   300 |     2 | 9.80e-04 |     4.0321 |   3.9946 |    54.30 |  2.7500  <- saved
          ROMEO:
-         Pay fovedech, sir, Dileed.
+         And, now, beavoud?
 ```
 
 Perplexity reads as "how many tokens the model is effectively choosing between": 569 means pure guessing over the vocabulary, and lower is better.
+
+**Bits per character** (`Val BPC`) is the validation loss divided by the average characters per token, converted to bits. Loss and perplexity are *per token*, so they change whenever the tokenizer does: with more BPE merges each token covers more text and per-token loss goes up, even if the model is no better or worse. Bits per character doesn't depend on the tokenizer, so use it to compare runs with different `NUM_MERGES`, or against character-level models.
 
 The pipeline was first verified with a single-batch overfit test (training repeatedly on one fixed batch), which confirmed loss collapses from the random-guess baseline (`ln(vocab_size) ≈ 6.34`) toward zero — proving gradients flow correctly through the entire computation graph before committing to a full training run.
 

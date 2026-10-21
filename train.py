@@ -17,7 +17,7 @@ Pipeline:
               |                                                  ^
               |                       warmup + cosine LR schedule
               |
-    every EVAL_EVERY steps: val loss, perplexity, a short sample
+    every EVAL_EVERY steps: val loss, perplexity, bits per character, a sample
               |
     Best model (lowest val loss) + tokenizer  -->  checkpoints/  (checkpoint.py)
 
@@ -62,6 +62,20 @@ def evaluate(model, dataloader, loss_fn, device):
             num_batches += 1
 
     return total_loss / num_batches
+
+
+def bits_per_char(loss_per_token, chars_per_token):
+    """
+    Convert a cross-entropy loss in nats per token to bits per character.
+
+    Loss per token depends on the tokenizer: with more BPE merges each
+    token covers more text, so per-token loss rises even if the model
+    predicts the text equally well. Dividing by the average characters
+    per token gives a loss per character, comparable across tokenizers
+    (and with character-level models); dividing by ln 2 turns nats into
+    bits, the usual unit for this number.
+    """
+    return loss_per_token / chars_per_token / math.log(2)
 
 
 def get_lr(step, total_steps):
@@ -136,6 +150,7 @@ def main():
     # Validation should be deterministic and cover every window, so no
     # shuffling and keep the last partial batch.
     val_loader = create_dataloader(val_text, tokenizer, shuffle=False, drop_last=False)
+    val_chars_per_token = len(val_text) / len(tokenizer.encode(val_text))
 
     # Stored in the checkpoint so generate.py can rebuild the exact same
     # architecture even if config.py has changed since training.
@@ -150,7 +165,8 @@ def main():
     }
     model = MiniLLM(**model_config).to(device)
     loss_fn = nn.CrossEntropyLoss()
-    optimizer = torch.optim.AdamW(model.parameters(), lr=config.LEARNING_RATE)
+    optimizer = torch.optim.AdamW(model.optimizer_param_groups(config.WEIGHT_DECAY),
+                                  lr=config.LEARNING_RATE, betas=config.BETAS)
 
     total_steps = config.EPOCHS * len(train_loader)
     num_params = sum(p.numel() for p in model.parameters())
@@ -159,12 +175,13 @@ def main():
           f"Peak LR: {config.LEARNING_RATE} | Epochs: {config.EPOCHS} | "
           f"Steps: {total_steps} ({len(train_loader)}/epoch)\n")
     print(f"{'Step':>6} | {'Epoch':>5} | {'LR':>8} | {'Train Loss':>10} | "
-          f"{'Val Loss':>8} | {'Val PPL':>8}")
-    print("-" * 62)
+          f"{'Val Loss':>8} | {'Val PPL':>8} | {'Val BPC':>7}")
+    print("-" * 72)
 
     # Only keep the lowest val loss: later steps can start overfitting,
     # and the best generalizing model is the one worth keeping.
     best_val_loss = float("inf")
+    best_val_bpc = float("inf")
     running_loss, running_steps = 0.0, 0
     step = 0
 
@@ -199,22 +216,25 @@ def main():
             # Perplexity = exp(loss): roughly how many tokens the model
             # is choosing between at each step (vocab_size = pure guessing).
             val_ppl = math.exp(val_loss)
+            val_bpc = bits_per_char(val_loss, val_chars_per_token)
 
             marker = ""
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
+                best_val_bpc = val_bpc
                 save_checkpoint(model, model_config, tokenizer, epoch, val_loss)
                 marker = "  <- saved"
 
             print(f"{step:>6} | {epoch:>5} | {lr:>8.2e} | {train_loss:>10.4f} | "
-                  f"{val_loss:>8.4f} | {val_ppl:>8.2f}{marker}")
+                  f"{val_loss:>8.4f} | {val_ppl:>8.2f} | {val_bpc:>7.4f}{marker}")
             sample = sample_text(model, tokenizer, device)
             print("         " + sample.replace("\n", "\n         ") + "\n", flush=True)
 
             model.train()
 
     print(f"Training complete. Best val loss {best_val_loss:.4f} "
-          f"(perplexity {math.exp(best_val_loss):.2f}), "
+          f"(perplexity {math.exp(best_val_loss):.2f}, "
+          f"{best_val_bpc:.4f} bits/char), "
           f"checkpoint in {default_checkpoint_dir()}")
 
 

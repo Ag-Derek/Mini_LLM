@@ -3,6 +3,8 @@ Training-infrastructure tests: the learning-rate schedule, checkpoint
 save/load, and train.py's tokenizer reuse.
 """
 
+import math
+
 import pytest
 import torch
 
@@ -32,6 +34,13 @@ def test_lr_warmup_then_cosine_decay():
     assert all(a >= b for a, b in zip(lrs[warmup:], lrs[warmup + 1:]))
     assert lrs[total] == pytest.approx(config.MIN_LR)
     assert min(lrs[warmup:]) >= config.MIN_LR - 1e-12
+
+
+def test_bits_per_char():
+    # ln 2 nats per token, one character per token = exactly 1 bit/char.
+    assert train.bits_per_char(math.log(2), 1.0) == pytest.approx(1.0)
+    # Same loss per token over tokens twice as long = half the bits per char.
+    assert train.bits_per_char(math.log(2), 2.0) == pytest.approx(0.5)
 
 
 # ---------------------------------------------------------------------------

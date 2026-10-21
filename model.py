@@ -90,11 +90,52 @@ class MiniLLM(nn.Module):
             # and saves vocab_size * embedding_dim parameters.
             self.lm_head.weight = self.token_embedding.weight
 
-            # nn.Embedding starts at std 1.0, which as output weights would
-            # give huge initial logits. Use GPT-2's std 0.02 instead, and
-            # the same for positions so they don't drown out token identity.
-            nn.init.normal_(self.token_embedding.weight, mean=0.0, std=0.02)
-            nn.init.normal_(self.position_embedding.weight, mean=0.0, std=0.02)
+        self._init_weights()
+
+    def _init_weights(self):
+        """
+        GPT-2 initialization.
+
+        Every Linear and Embedding weight starts as N(0, 0.02), biases at 0
+        (LayerNorm keeps its default gain 1, bias 0). PyTorch's own defaults
+        are different for each layer type -- nn.Embedding even starts at
+        std 1.0, which as tied output weights would give huge initial logits.
+
+        The layers that write back into the residual stream (attention's
+        output projection and the FFN's second Linear) are scaled down by
+        1/sqrt(2 * num_layers). Each block adds two such outputs onto the
+        residual, so without this the residual's variance grows with depth;
+        with it, the sum over all 2 * num_layers additions stays about the
+        same size no matter how many blocks are stacked.
+        """
+        for module in self.modules():
+            if isinstance(module, nn.Linear):
+                nn.init.normal_(module.weight, mean=0.0, std=0.02)
+                if module.bias is not None:
+                    nn.init.zeros_(module.bias)
+            elif isinstance(module, nn.Embedding):
+                nn.init.normal_(module.weight, mean=0.0, std=0.02)
+
+        residual_std = 0.02 / (2 * len(self.transformer.blocks)) ** 0.5
+        for block in self.transformer.blocks:
+            nn.init.normal_(block.attn.proj.weight, mean=0.0, std=residual_std)
+            nn.init.normal_(block.ffn.net[2].weight, mean=0.0, std=residual_std)
+
+    def optimizer_param_groups(self, weight_decay):
+        """
+        Split parameters for AdamW: weight matrices (2-D: Linear weights,
+        embeddings, and the tied lm_head) get weight decay; LayerNorm
+        gains and biases (1-D) don't. named_parameters() lists the tied
+        embedding / lm_head matrix only once.
+        """
+        decay, no_decay = [], []
+        for _, param in self.named_parameters():
+            if param.requires_grad:
+                (decay if param.dim() >= 2 else no_decay).append(param)
+        return [
+            {"params": decay, "weight_decay": weight_decay},
+            {"params": no_decay, "weight_decay": 0.0},
+        ]
 
     def forward(self, token_ids):
         """

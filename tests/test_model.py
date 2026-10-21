@@ -80,6 +80,42 @@ def test_weight_tying_shares_one_matrix():
     assert not torch.equal(tied.token_embedding.weight, before)
 
 
+def test_gpt2_initialization():
+    torch.manual_seed(0)
+    model = MiniLLM(vocab_size=500, embedding_dim=128, num_heads=4,
+                    num_layers=8, max_seq_length=SEQ)
+    block = model.transformer.blocks[0]
+
+    # Weights start at std 0.02 (embeddings included, not nn.Embedding's 1.0)...
+    for weight in (model.token_embedding.weight, model.position_embedding.weight,
+                   block.attn.heads[0].query.weight, block.ffn.net[0].weight):
+        assert abs(weight.std().item() - 0.02) < 0.003
+    assert torch.all(block.ffn.net[0].bias == 0)
+
+    # ...except the projections back into the residual stream, which are
+    # scaled down by 1/sqrt(2 * num_layers) = 1/4 here.
+    for weight in (block.attn.proj.weight, block.ffn.net[2].weight):
+        assert abs(weight.std().item() - 0.005) < 0.001
+
+    # LayerNorm keeps its default gain 1, bias 0.
+    assert torch.all(block.ln1.weight == 1) and torch.all(block.ln1.bias == 0)
+
+
+def test_weight_decay_only_on_weight_matrices():
+    model = tiny_model()
+    decay, no_decay = model.optimizer_param_groups(weight_decay=0.1)
+
+    assert decay["weight_decay"] == 0.1 and no_decay["weight_decay"] == 0.0
+    assert all(p.dim() >= 2 for p in decay["params"])
+    assert all(p.dim() == 1 for p in no_decay["params"])
+    assert any(p is model.transformer.blocks[0].ln1.weight for p in no_decay["params"])
+
+    # Every parameter lands in exactly one group, the tied matrix only once.
+    grouped = decay["params"] + no_decay["params"]
+    assert len(grouped) == len({id(p) for p in grouped})
+    assert {id(p) for p in grouped} == {id(p) for p in model.parameters()}
+
+
 def test_changing_future_tokens_does_not_change_past_logits():
     # The end-to-end version of the causal mask test: if any layer leaked
     # information backwards, editing the last token would change the
