@@ -366,21 +366,68 @@ Type `\n` for a line break, since the model learned Shakespeare as `SPEAKER:` on
 
 ## Web Interface (`app.py`)
 
-A browser page for the same model, served by Python's standard library (nothing extra to install):
+A chat-style browser page for the same model, served by Python's standard library (no web framework to install).
+
+### Hosting it locally
+
+1. **Get the code and install PyTorch** (Python 3.10+):
+
+   ```bash
+   git clone <this-repo-url>
+   cd Mini_LLM
+   pip install -r requirements.txt
+   ```
+
+   On a machine without an NVIDIA GPU, the smaller CPU-only build is enough:
+
+   ```bash
+   pip install torch --index-url https://download.pytorch.org/whl/cpu
+   ```
+
+2. **Train a checkpoint.** `checkpoints/` is git-ignored, so a fresh clone has no trained model yet:
+
+   ```bash
+   python train.py      # writes checkpoints/mini_llm.pt and checkpoints/tokenizer.json
+   ```
+
+   Skip this step if `checkpoints/` already contains those two files.
+
+3. **Start the server:**
+
+   ```bash
+   python app.py
+   ```
+
+   It prints the address once the model is loaded. Leave it running.
+
+4. **Open http://127.0.0.1:8000** in a browser.
+
+5. **Stop it** with `Ctrl+C` in the terminal running `app.py`.
+
+Options:
 
 ```bash
-python app.py                # then open http://127.0.0.1:8000
-python app.py --port 8080 --checkpoint-dir checkpoints/untied_baseline
+python app.py --port 8080                                   # use a different port
+python app.py --checkpoint-dir checkpoints/untied_baseline  # serve another checkpoint
+python app.py --host 0.0.0.0                                # let other devices on your network connect
 ```
 
-* Type a prompt with real line breaks, or start from one of the example prompts (`ROMEO:`, `First Citizen:`, ...)
-* Sliders for temperature, top-k and length, plus an optional seed for reproducible text
-* The output shows your prompt and the generated text in different colors
-* **Continue** generates more text after the current output. Only the last part is sent, since the model only sees its last 128 tokens anyway
-* A history of the session's generations; click one to show it again
-* Shows the loaded checkpoint's parameters, validation loss and device
+By default the server listens only on `127.0.0.1`, so only your own machine can reach it. With `--host 0.0.0.0`, other devices open `http://<your-computer's-IP>:8000`, and Windows may ask you to allow Python through the firewall. The server has no login, so only do this on a network you trust.
 
-The model is loaded once when the server starts and generates on request (`POST /api/generate`), using the same `continue_text()` as `generate.py`. The server listens only on `127.0.0.1` unless `--host` says otherwise.
+If the page says the server can't be reached, check that `app.py` is still running. If port 8000 is already in use, pick another one with `--port`.
+
+### Using the page
+
+* Type the start of a line and press **Enter** to send; **Shift+Enter** adds a line break (e.g. `JULIET:` then `O Romeo`). A new chat also offers example prompts
+* Your prompt appears in a bubble on the right, and the model's continuation appears below it
+* Under each reply: **copy**, **continue writing** (more text after the reply; only the last part is sent, since the model only sees its last 128 tokens) and **regenerate**, plus the token count and time taken
+* The sliders button in the input bar opens settings for temperature, top-k, length and an optional seed for reproducible text
+* **Recents** in the sidebar lists your chats. They're saved in your browser, so they survive a page refresh
+* The sidebar footer shows the loaded checkpoint's parameter count, validation loss and device
+
+It looks like a chat app but it is still text continuation: each message is continued on its own, and the model doesn't remember earlier messages in the chat.
+
+The model is loaded once when the server starts and generates on request (`POST /api/generate`), using the same `continue_text()` as `generate.py`.
 
 ---
 
