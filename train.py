@@ -117,6 +117,9 @@ def parse_args(argv=None):
                         help="where to save the model and tokenizer (default: "
                              "config.CHECKPOINT_DIR, or checkpoints/<corpus name>/ "
                              "when --corpus is given)")
+    parser.add_argument("--epochs", type=int, default=config.EPOCHS,
+                        help="passes over the training text (default: %(default)s); "
+                             "a bigger corpus needs fewer")
     parser.add_argument("--sample-prompt", default=config.SAMPLE_PROMPT,
                         help="prompt for the samples printed during training "
                              "(default: %(default)r); \\n means a line break")
@@ -211,13 +214,13 @@ def main():
     optimizer = torch.optim.AdamW(model.optimizer_param_groups(config.WEIGHT_DECAY),
                                   lr=config.LEARNING_RATE, betas=config.BETAS)
 
-    total_steps = config.EPOCHS * len(train_loader)
+    total_steps = args.epochs * len(train_loader)
     num_params = sum(p.numel() for p in model.parameters())
     print(f"Corpus: {args.corpus or config.CORPUS_FILENAME} ({len(text):,} chars) | "
           f"Saving to: {checkpoint_dir}")
     print(f"Device: {device} | Params: {num_params:,} | Vocab size: {vocab_size}")
     print(f"Context: {config.CONTEXT_LENGTH} | Batch size: {config.BATCH_SIZE} | "
-          f"Peak LR: {config.LEARNING_RATE} | Epochs: {config.EPOCHS} | "
+          f"Peak LR: {config.LEARNING_RATE} | Epochs: {args.epochs} | "
           f"Steps: {total_steps} ({len(train_loader)}/epoch)\n")
     print(f"{'Step':>6} | {'Epoch':>5} | {'LR':>8} | {'Train Loss':>10} | "
           f"{'Val Loss':>8} | {'Val PPL':>8} | {'Val BPC':>7}")
@@ -231,7 +234,7 @@ def main():
     step = 0
 
     model.train()
-    for epoch in range(1, config.EPOCHS + 1):
+    for epoch in range(1, args.epochs + 1):
         for X, Y in train_loader:
             lr = get_lr(step, total_steps)
             for group in optimizer.param_groups:

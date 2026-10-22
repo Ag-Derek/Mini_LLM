@@ -157,7 +157,12 @@ def test_default_args_use_config():
     args = train.parse_args([])
     assert args.corpus is None
     assert args.checkpoint_dir is None
+    assert args.epochs == config.EPOCHS
     assert args.sample_prompt == config.SAMPLE_PROMPT
+
+
+def test_epochs_option():
+    assert train.parse_args(["--epochs", "3"]).epochs == 3
 
 
 def test_sample_prompt_turns_backslash_n_into_newline():
