@@ -1,2 +1,5 @@
 __pycache__/
 checkpoints/
+
+# Built by `python -m data.prepare_dialog` (6 MB, CC BY-NC-SA).
+data/dialog_corpus.txt

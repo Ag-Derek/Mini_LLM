@@ -134,3 +134,46 @@ def test_no_saved_tokenizer_trains_one(checkpoint_dir, monkeypatch):
     monkeypatch.setattr(config, "NUM_MERGES", 15)
     tok = train.load_or_train_tokenizer(TEXT)
     assert tok.decode(tok.encode(TEXT)) == TEXT
+
+
+def test_tokenizer_reuse_reads_given_checkpoint_dir(tmp_path, monkeypatch):
+    # A tokenizer saved in a custom folder is found there, not in the default.
+    make_tokenizer(num_merges=20).save(tmp_path / config.TOKENIZER_FILENAME)
+    monkeypatch.setattr(config, "NUM_MERGES", 20)
+
+    def fail(*args, **kwargs):
+        raise AssertionError("tokenizer should have been reused, not retrained")
+    monkeypatch.setattr(BPETokenizer, "train", fail)
+
+    tok = train.load_or_train_tokenizer(TEXT, tmp_path)
+    assert len(tok.merges) == 20
+
+
+# ---------------------------------------------------------------------------
+# Command-line options in train.py
+# ---------------------------------------------------------------------------
+
+def test_default_args_use_config():
+    args = train.parse_args([])
+    assert args.corpus is None
+    assert args.checkpoint_dir is None
+    assert args.sample_prompt == config.SAMPLE_PROMPT
+
+
+def test_sample_prompt_turns_backslash_n_into_newline():
+    args = train.parse_args(["--sample-prompt", "User: hi\nBot:"])
+    assert args.sample_prompt == "User: hi\nBot:"
+
+
+def test_default_corpus_saves_to_default_checkpoint_dir():
+    assert train.resolve_checkpoint_dir(None, None) == train.default_checkpoint_dir()
+
+
+def test_custom_corpus_gets_its_own_checkpoint_dir():
+    # Training on a new corpus must not overwrite the default model.
+    path = train.resolve_checkpoint_dir("data/dialog_corpus.txt", None)
+    assert path == train.default_checkpoint_dir() / "dialog_corpus"
+
+
+def test_explicit_checkpoint_dir_wins(tmp_path):
+    assert train.resolve_checkpoint_dir("data/dialog_corpus.txt", tmp_path) == tmp_path

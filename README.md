@@ -284,15 +284,15 @@ Current configuration:
 | Setting              | Value       |
 | --------------------- | ----------- |
 | Vocabulary size       | 569         |
-| Embedding dimension   | 128         |
-| Attention heads        | 4           |
+| Embedding dimension   | 256         |
+| Attention heads        | 8           |
 | Dimensions per head    | 32          |
 | Transformer layers    | 6           |
 | Max sequence length   | 128         |
-| Dropout                | 0.1         |
+| Dropout                | 0.2         |
 | FFN expansion          | 4×          |
 | Weight tying           | On          |
-| Total parameters       | ~1.28M      |
+| Total parameters       | ~4.91M      |
 
 The end-to-end forward pass has been verified — a batch of token IDs of shape `(batch, seq_len)` produces logits of shape `(batch, seq_len, vocab_size)`.
 
@@ -435,6 +435,24 @@ It looks like a chat app but it is still text continuation: each message is cont
 
 The model is loaded once when the server starts and generates on request (`POST /api/generate`), using the same `continue_text()` as `generate.py`.
 
+## Chat Mode (DailyDialog)
+
+A model only learns the layout of its training text, so a Shakespeare model can only write plays. To get replies instead, train a second model on conversations:
+
+```bash
+python -m data.prepare_dialog            # downloads DailyDialog -> data/dialog_corpus.txt
+python train.py --corpus data/dialog_corpus.txt --sample-prompt "User: Hi, how are you?\nBot:"
+python generate.py --chat --interactive --checkpoint-dir checkpoints/dialog_corpus
+python app.py --chat --checkpoint-dir checkpoints/dialog_corpus
+```
+
+* `data/prepare_dialog.py` turns DailyDialog's ~12K everyday conversations (6.3M characters, ~5.6× Tiny Shakespeare) into alternating `User:` / `Bot:` lines with a blank line between conversations, fixing the dataset's spaced-out punctuation (`I ’ m here , ok ?` → `I'm here, ok?`). DailyDialog is CC BY-NC-SA 4.0, so the generated file is git-ignored
+* `--corpus` trains into `checkpoints/<corpus name>/` unless `--checkpoint-dir` says otherwise, so the Shakespeare model in `checkpoints/` is never overwritten
+* Chat mode wraps your message as `User: <message>\nBot:` and generation stops at the first line break, the end of the Bot's turn. Only the reply is shown, and a short reply takes a fraction of the full token budget
+* In the web page, **Chat mode** is a toggle in the settings panel; `--chat` only sets its starting state
+
+The model learns the *shape* of a conversation (taking turns, greetings, questions back), not facts: at a few million parameters, answers sound like answers but are often wrong. Each message is still answered on its own, without the earlier turns.
+
 ---
 
 # Repository Structure
@@ -445,6 +463,7 @@ Mini_LLM/
 ├── data/
 │   ├── tiny_corpus.txt
 │   ├── corpus.py
+│   ├── prepare_dialog.py   (builds dialog_corpus.txt, git-ignored)
 │   └── README.md
 │
 ├── tokenizer.py

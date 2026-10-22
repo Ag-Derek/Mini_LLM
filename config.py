@@ -77,7 +77,10 @@ VAL_RATIO = 0.1
 # ---------------------------------------------------------------------------
 # Size of each token's embedding vector. attention.py's demo used 8 (to
 # keep printed tensors readable); a real model needs a wider embedding.
-EMBEDDING_DIM = 128
+# Was 128 (~1.3M parameters, ~1.1 s per training step on a 4-thread CPU);
+# 256 gives ~4.9M parameters at ~2.8 s per step. Parameters grow with the
+# square of this, so doubling it roughly quadruples the model.
+EMBEDDING_DIM = 256
 
 # ---------------------------------------------------------------------------
 # Attention / Transformer (attention.py, transformer.py, model.py)
@@ -90,20 +93,24 @@ EMBEDDING_DIM = 128
 MAX_SEQ_LENGTH = CONTEXT_LENGTH
 
 # Number of parallel attention heads. EMBEDDING_DIM must be divisible by
-# this (asserted in MultiHeadAttention).
-NUM_HEADS = 4
+# this (asserted in MultiHeadAttention). 8 heads keeps each head at 32
+# dimensions, the same as the earlier 128 / 4 setup.
+NUM_HEADS = 8
 
 # Number of stacked Transformer blocks (transformer.py's TransformerBlocks).
 NUM_LAYERS = 6
 
 # Share the token-embedding matrix with the output layer (lm_head)
 # instead of learning two separate (vocab_size, EMBEDDING_DIM) matrices.
-# Saves ~73K parameters at the current vocab/embedding size.
+# Saves ~146K parameters at the current vocab/embedding size.
 TIE_WEIGHTS = True
 
 # Dropout probability, applied to the embeddings (model.py), after
-# attention and inside the feed-forward network (transformer.py).
-DROPOUT = 0.1
+# attention and inside the feed-forward network (transformer.py). Raised
+# from 0.1 to 0.2 along with the bigger model: ~4.9M parameters can start
+# memorizing a ~1 MB corpus, and stronger dropout pushes back on that
+# (nanoGPT uses 0.2 for a similar-sized model on Tiny Shakespeare).
+DROPOUT = 0.2
 
 # ---------------------------------------------------------------------------
 # Training (train.py)
@@ -151,6 +158,24 @@ DEVICE = "auto"
 # ---------------------------------------------------------------------------
 DATA_DIR = "data"
 CORPUS_FILENAME = "tiny_corpus.txt"
+
+# Conversation corpus written by data/prepare_dialog.py. Train on it with
+#   python train.py --corpus data/dialog_corpus.txt
+DIALOG_CORPUS_FILENAME = "dialog_corpus.txt"
+
+# ---------------------------------------------------------------------------
+# Chat format (data/prepare_dialog.py, generate.py, app.py)
+# ---------------------------------------------------------------------------
+# Each turn of a conversation is one line starting with a speaker label,
+# and conversations are separated by a blank line:
+#
+#     User: Hi, how are you?
+#     Bot: Fine, thanks. And you?
+#
+# The labels must match between the corpus and chat mode: chat mode wraps
+# what you type as "User: <text>\nBot:" so the model writes the Bot line.
+CHAT_USER_PREFIX = "User:"
+CHAT_BOT_PREFIX = "Bot:"
 
 # ---------------------------------------------------------------------------
 # Checkpoints (checkpoint.py)

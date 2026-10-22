@@ -27,9 +27,17 @@ epochs, device) comes from config.py.
 Run:
 
     python train.py
+    python train.py --corpus data/dialog_corpus.txt --sample-prompt "User: hi\\nBot:"
+
+With --corpus and no --checkpoint-dir, the run saves to
+checkpoints/<corpus file name>/ (e.g. checkpoints/dialog_corpus/), so
+training on a new corpus never overwrites the Tiny Shakespeare model in
+checkpoints/.
 """
 
+import argparse
 import math
+from pathlib import Path
 
 import torch
 import torch.nn as nn
@@ -100,9 +108,41 @@ def get_lr(step, total_steps):
     return config.MIN_LR + cosine * (config.LEARNING_RATE - config.MIN_LR)
 
 
-def load_or_train_tokenizer(train_text):
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(description="Train a MiniLLM.")
+    parser.add_argument("--corpus", default=None,
+                        help="path to a UTF-8 text file to train on "
+                             "(default: config.DATA_DIR / config.CORPUS_FILENAME)")
+    parser.add_argument("--checkpoint-dir", default=None,
+                        help="where to save the model and tokenizer (default: "
+                             "config.CHECKPOINT_DIR, or checkpoints/<corpus name>/ "
+                             "when --corpus is given)")
+    parser.add_argument("--sample-prompt", default=config.SAMPLE_PROMPT,
+                        help="prompt for the samples printed during training "
+                             "(default: %(default)r); \\n means a line break")
+    args = parser.parse_args(argv)
+    args.sample_prompt = args.sample_prompt.replace("\\n", "\n")
+    return args
+
+
+def resolve_checkpoint_dir(corpus, checkpoint_dir):
     """
-    Reuse the tokenizer saved in checkpoints/ by a previous run (BPE
+    Where this run saves. An explicit --checkpoint-dir wins; otherwise a
+    custom corpus gets its own folder next to the default checkpoint, named
+    after the corpus file, so different corpora never share (and overwrite)
+    a model or tokenizer.
+    """
+    if checkpoint_dir is not None:
+        return Path(checkpoint_dir)
+    if corpus is not None:
+        return default_checkpoint_dir() / Path(corpus).stem
+    return default_checkpoint_dir()
+
+
+def load_or_train_tokenizer(train_text, checkpoint_dir=None):
+    """
+    Reuse the tokenizer saved in checkpoint_dir (defaults to
+    config.CHECKPOINT_DIR) by a previous run (BPE
     training takes ~50s on the full corpus), otherwise train a new one.
 
     The saved tokenizer is only reused if it has the configured number
@@ -111,7 +151,7 @@ def load_or_train_tokenizer(train_text):
     bpe_tokenizer.py) triggers retraining. Delete checkpoints/ to force
     a fresh tokenizer.
     """
-    path = default_checkpoint_dir() / config.TOKENIZER_FILENAME
+    path = Path(checkpoint_dir or default_checkpoint_dir()) / config.TOKENIZER_FILENAME
     if path.exists():
         tokenizer = BPETokenizer.load(path)
         probe = train_text[:10_000]
@@ -127,9 +167,9 @@ def load_or_train_tokenizer(train_text):
     return tokenizer
 
 
-def sample_text(model, tokenizer, device):
-    """Short continuation of config.SAMPLE_PROMPT from the current model."""
-    prompt_ids = torch.tensor([tokenizer.encode(config.SAMPLE_PROMPT)], device=device)
+def sample_text(model, tokenizer, device, prompt=config.SAMPLE_PROMPT):
+    """Short continuation of `prompt` from the current model."""
+    prompt_ids = torch.tensor([tokenizer.encode(prompt)], device=device)
     model.eval()
     output_ids = model.generate(prompt_ids, config.SAMPLE_TOKENS,
                                 temperature=config.TEMPERATURE, top_k=config.TOP_K)
@@ -137,13 +177,16 @@ def sample_text(model, tokenizer, device):
 
 
 def main():
+    args = parse_args()
+    checkpoint_dir = resolve_checkpoint_dir(args.corpus, args.checkpoint_dir)
+
     torch.manual_seed(0)
     device = get_device()
 
-    text = load_corpus()
+    text = load_corpus(args.corpus)
     train_text, val_text = train_val_split(text)
 
-    tokenizer = load_or_train_tokenizer(train_text)
+    tokenizer = load_or_train_tokenizer(train_text, checkpoint_dir)
     vocab_size = tokenizer.vocab_size
 
     train_loader = create_dataloader(train_text, tokenizer)
@@ -170,6 +213,8 @@ def main():
 
     total_steps = config.EPOCHS * len(train_loader)
     num_params = sum(p.numel() for p in model.parameters())
+    print(f"Corpus: {args.corpus or config.CORPUS_FILENAME} ({len(text):,} chars) | "
+          f"Saving to: {checkpoint_dir}")
     print(f"Device: {device} | Params: {num_params:,} | Vocab size: {vocab_size}")
     print(f"Context: {config.CONTEXT_LENGTH} | Batch size: {config.BATCH_SIZE} | "
           f"Peak LR: {config.LEARNING_RATE} | Epochs: {config.EPOCHS} | "
@@ -222,12 +267,13 @@ def main():
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
                 best_val_bpc = val_bpc
-                save_checkpoint(model, model_config, tokenizer, epoch, val_loss)
+                save_checkpoint(model, model_config, tokenizer, epoch, val_loss,
+                                checkpoint_dir)
                 marker = "  <- saved"
 
             print(f"{step:>6} | {epoch:>5} | {lr:>8.2e} | {train_loss:>10.4f} | "
                   f"{val_loss:>8.4f} | {val_ppl:>8.2f} | {val_bpc:>7.4f}{marker}")
-            sample = sample_text(model, tokenizer, device)
+            sample = sample_text(model, tokenizer, device, args.sample_prompt)
             print("         " + sample.replace("\n", "\n         ") + "\n", flush=True)
 
             model.train()
@@ -235,7 +281,7 @@ def main():
     print(f"Training complete. Best val loss {best_val_loss:.4f} "
           f"(perplexity {math.exp(best_val_loss):.2f}, "
           f"{best_val_bpc:.4f} bits/char), "
-          f"checkpoint in {default_checkpoint_dir()}")
+          f"checkpoint in {checkpoint_dir}")
 
 
 if __name__ == "__main__":

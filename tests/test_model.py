@@ -151,6 +151,26 @@ def test_greedy_generation_is_deterministic_and_matches_top_k_1():
     assert torch.equal(greedy, model.generate(prompt, 10, temperature=1.0, top_k=1))
 
 
+def test_generate_stops_at_a_stop_token():
+    model = tiny_model().eval()
+    prompt = torch.randint(0, VOCAB, (1, 4))
+    full = model.generate(prompt, 10, temperature=0)
+
+    # Make the third generated token a stop token: generation ends right
+    # after it (keeping it), and nothing before it changes.
+    stop_id = full[0, 4 + 2].item()
+    first = (full[0, 4:] == stop_id).nonzero()[0].item()  # it may appear earlier
+    stopped = model.generate(prompt, 10, temperature=0, stop_ids={stop_id})
+    assert torch.equal(stopped, full[:, :4 + first + 1])
+
+
+def test_generate_without_stop_tokens_runs_to_max_new_tokens():
+    model = tiny_model().eval()
+    prompt = torch.randint(0, VOCAB, (1, 4))
+    out = model.generate(prompt, 10, temperature=0, stop_ids=set())
+    assert out.shape == (1, 14)
+
+
 def test_single_batch_overfit():
     # If gradients reach every layer, a model can memorize one fixed batch:
     # loss should fall from ~ln(VOCAB) ~ 3.0 to near zero.

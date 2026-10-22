@@ -13,12 +13,17 @@ Python standard library (no Flask etc. to install):
         GET  /api/info      -> checkpoint + default settings as JSON
         POST /api/generate  -> {prompt, settings} in, continuation out
           |
-    continue_text()  (generate.py, same code path as the CLI)
+    continue_text() or, with "chat": true, chat_reply()
+    (generate.py, same code paths as the CLI)
 
 Run (after `python train.py`):
 
     python app.py
     python app.py --port 8080 --checkpoint-dir checkpoints/untied_baseline
+    python app.py --chat --checkpoint-dir checkpoints/dialog_corpus
+
+--chat only sets the page's starting mode; the settings panel can switch
+between continuing text and chatting either way.
 
 then open http://127.0.0.1:8000 in a browser. The server only listens on
 this machine (127.0.0.1) unless --host says otherwise.
@@ -36,7 +41,7 @@ import torch
 
 import config
 from checkpoint import load_checkpoint
-from generate import continue_text
+from generate import chat_reply, continue_text
 from model import get_device
 
 INDEX_HTML = Path(__file__).resolve().parent / "web" / "index.html"
@@ -80,19 +85,25 @@ def parse_settings(payload):
         temperature=number("temperature", config.TEMPERATURE, float, 0.0, 2.0),
         top_k=number("top_k", config.TOP_K or 0, int, 0, 100_000),
         seed=number("seed", None, int, 0, 2**32 - 1),
+        chat=payload.get("chat", False),
     )
+    if not isinstance(settings.chat, bool):
+        raise ValueError("chat must be true or false.")
     return prompt, settings
 
 
 class MiniLLMServer(ThreadingHTTPServer):
     """An HTTP server that holds one loaded model for every request."""
 
-    def __init__(self, address, model, tokenizer, info, device):
+    def __init__(self, address, model, tokenizer, info, device, chat=False):
         super().__init__(address, RequestHandler)
         self.model = model
         self.tokenizer = tokenizer
         self.info = info
         self.device = device
+        # Whether the page starts in chat mode (`python app.py --chat`);
+        # each request still says for itself which mode it wants.
+        self.chat = chat
         # One generation at a time: requests run on separate threads, but
         # they share one model and torch's global random seed.
         self.lock = threading.Lock()
@@ -102,9 +113,22 @@ class MiniLLMServer(ThreadingHTTPServer):
             if settings.seed is not None:
                 torch.manual_seed(settings.seed)
             start = time.perf_counter()
-            text = continue_text(self.model, self.tokenizer, prompt,
-                                 settings, self.device)
+            if settings.chat:
+                reply, new_tokens = chat_reply(self.model, self.tokenizer, prompt,
+                                               settings, self.device)
+            else:
+                text = continue_text(self.model, self.tokenizer, prompt,
+                                     settings, self.device)
             elapsed = time.perf_counter() - start
+
+        if settings.chat:
+            # The prompt is the user's message; the reply is only the Bot line.
+            return {
+                "prompt": prompt,
+                "continuation": reply,
+                "new_tokens": new_tokens,
+                "seconds": round(elapsed, 3),
+            }
 
         # The decoded prompt can differ from what was typed (characters the
         # tokenizer doesn't know become <unk>), so split on the decoded form.
@@ -136,6 +160,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                     "max_new_tokens": config.MAX_NEW_TOKENS,
                     "temperature": config.TEMPERATURE,
                     "top_k": config.TOP_K or 0,
+                    "chat": self.server.chat,
                 },
                 "limits": {
                     "max_new_tokens": MAX_NEW_TOKENS_LIMIT,
@@ -190,6 +215,9 @@ def parse_args():
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--checkpoint-dir", default=None,
                         help="defaults to config.CHECKPOINT_DIR")
+    parser.add_argument("--chat", action="store_true",
+                        help="open the page in chat mode (for a model trained on "
+                             "the dialog corpus)")
     return parser.parse_args()
 
 
@@ -198,7 +226,8 @@ def main():
     device = get_device()
     model, tokenizer, info = load_checkpoint(args.checkpoint_dir, map_location=device)
 
-    server = MiniLLMServer((args.host, args.port), model, tokenizer, info, device)
+    server = MiniLLMServer((args.host, args.port), model, tokenizer, info, device,
+                           chat=args.chat)
     print(f"Loaded checkpoint from epoch {info['epoch']} "
           f"(val loss {info['val_loss']:.4f}) on {device}")
     print(f"Open http://{args.host}:{server.server_port} in your browser "

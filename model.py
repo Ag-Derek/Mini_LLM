@@ -155,17 +155,22 @@ class MiniLLM(nn.Module):
         return logits
 
     @torch.no_grad()
-    def generate(self, token_ids, max_new_tokens, temperature=1.0, top_k=None):
+    def generate(self, token_ids, max_new_tokens, temperature=1.0, top_k=None,
+                 stop_ids=None):
         """
         Autoregressive sampling: predict one token, append it, repeat.
 
         token_ids:      (batch, seq_len) prompt token ids
-        max_new_tokens: how many tokens to append
+        max_new_tokens: how many tokens to append, at most
         temperature:    divides the logits; 0 means greedy (argmax)
         top_k:          if set, sample only from the k most likely tokens
+        stop_ids:       if set, stop early once every row's newest token is
+                        one of these ids (e.g. a newline ending a chat
+                        turn); that token is kept in the output
 
-        Returns (batch, seq_len + max_new_tokens). Call model.eval()
-        first so dropout is off.
+        Returns (batch, seq_len + new tokens), where new tokens is
+        max_new_tokens unless stop_ids ended generation sooner. Call
+        model.eval() first so dropout is off.
         """
         for _ in range(max_new_tokens):
             # The position embedding only has max_seq_length rows, so the
@@ -186,6 +191,9 @@ class MiniLLM(nn.Module):
                 next_id = torch.multinomial(probs, num_samples=1)  # (B, 1)
 
             token_ids = torch.cat([token_ids, next_id], dim=1)
+
+            if stop_ids is not None and all(i in stop_ids for i in next_id[:, 0].tolist()):
+                break
 
         return token_ids
 

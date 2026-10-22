@@ -7,6 +7,8 @@ import pytest
 import torch
 
 from data.corpus import load_corpus, train_val_split
+from data.prepare_dialog import (build_corpus, clean_utterance, format_dialogue,
+                                 parse_raw_dialogues)
 from dataset import TextDataset, create_dataloader
 
 
@@ -60,3 +62,39 @@ def test_dataloader_batch_shape():
     X, Y = next(iter(loader))
     assert X.shape == Y.shape == (4, 8)
     assert X.dtype == torch.long
+
+
+# ---------------------------------------------------------------------------
+# DailyDialog chat corpus (data/prepare_dialog.py)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("raw, clean", [
+    ("Say , Jim , how about it ?", "Say, Jim, how about it?"),
+    ("I ’ m sure it ’ s fine !", "I'm sure it's fine!"),
+    ("I ' Ve got it", "I've got it"),
+    ("It costs $ 5 ( or so ) ...", "It costs $5 (or so)..."),
+    ("  extra   spaces  ", "extra spaces"),
+])
+def test_clean_utterance(raw, clean):
+    assert clean_utterance(raw) == clean
+
+
+def test_format_dialogue_alternates_user_and_bot():
+    assert format_dialogue(["Hi .", "Hello .", "Bye ."]) == (
+        "User: Hi .\nBot: Hello .\nUser: Bye ."
+    )
+
+
+def test_parse_raw_dialogues_splits_turns_and_skips_single_turns():
+    raw = "Hi , there . __eou__ Hello ! __eou__\nOnly one turn . __eou__\n"
+    assert parse_raw_dialogues(raw) == [["Hi, there.", "Hello!"]]
+
+
+def test_build_corpus_separates_and_dedupes_conversations():
+    a, b = ["Hi.", "Hello."], ["Bye.", "See you."]
+    corpus, duplicates = build_corpus([a, b, a])
+    assert duplicates == 1
+    assert corpus == (
+        "User: Hi.\nBot: Hello.\n\n"
+        "User: Bye.\nBot: See you.\n"
+    )

@@ -121,3 +121,26 @@ def test_generate_rejects_bad_requests(server):
     status, body = call(server, "/api/generate", {"prompt": ""})
     assert status == 400 and "error" in json.loads(body)
     assert call(server, "/api/nope")[0] == 404
+
+
+def test_parse_settings_chat_flag():
+    assert parse_settings({"prompt": "x"})[1].chat is False
+    assert parse_settings({"prompt": "x", "chat": True})[1].chat is True
+    with pytest.raises(ValueError):
+        parse_settings({"prompt": "x", "chat": "yes"})
+
+
+def test_info_reports_chat_default(server):
+    info = json.loads(call(server, "/api/info")[1])
+    assert info["defaults"]["chat"] is False
+
+
+def test_chat_generate_returns_only_the_reply(server):
+    status, body = call(server, "/api/generate",
+                        {"prompt": "hello", "chat": True,
+                         "max_new_tokens": 30, "temperature": 0})
+    data = json.loads(body)
+    assert status == 200
+    assert data["prompt"] == "hello"
+    assert "\n" not in data["continuation"]
+    assert 1 <= data["new_tokens"] <= 30

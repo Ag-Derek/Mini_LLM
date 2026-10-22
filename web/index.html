@@ -138,6 +138,8 @@
   .setting label { display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 4px; }
   .setting output, .setting .value { color: var(--muted); font-variant-numeric: tabular-nums; }
   .setting input[type=range] { width: 100%; accent-color: var(--accent); }
+  .setting input[type=checkbox] { width: 18px; height: 18px; margin: 0; accent-color: var(--accent); }
+  .setting-toggle label { align-items: center; cursor: pointer; }
   .setting input[type=number] {
     width: 100%; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--border);
     background: var(--bg); color: var(--text); font: inherit; font-size: 14px;
@@ -195,7 +197,7 @@
   <main class="main">
     <div class="topbar">
       <button class="icon-btn open-sidebar" id="open-sidebar" title="Open sidebar" aria-label="Open sidebar"><svg><use href="#i-panel"/></svg></button>
-      <span class="title">Shakespeare continuation</span>
+      <span class="title" id="title">Shakespeare continuation</span>
       <span class="spacer"></span>
       <button class="ghost-btn" id="top-new" title="New chat"><svg><use href="#i-new"/></svg></button>
     </div>
@@ -208,6 +210,10 @@
       <form class="composer" id="composer">
         <div class="settings" id="settings" role="dialog" aria-label="Generation settings">
           <h2>Generation settings</h2>
+          <div class="setting setting-toggle">
+            <label for="chat">Chat mode <input type="checkbox" id="chat"></label>
+            <p>Reply to your message instead of continuing it. Needs a model trained on the dialog corpus.</p>
+          </div>
           <div class="setting">
             <label for="temperature">Temperature <output id="temperature-value"></output></label>
             <input type="range" id="temperature" min="0" max="2" step="0.05">
@@ -234,7 +240,7 @@
         <textarea id="prompt" rows="1" spellcheck="false" placeholder="Start a line of Shakespeare…" aria-label="Prompt"></textarea>
         <button type="submit" class="send" id="send" title="Send (Enter)" aria-label="Send" disabled><svg><use href="#i-up"/></svg></button>
       </form>
-      <div class="footnote">Enter to send · Shift+Enter for a new line · The model continues your text; it doesn't remember earlier messages.</div>
+      <div class="footnote" id="footnote">Enter to send · Shift+Enter for a new line · The model continues your text; it doesn't remember earlier messages.</div>
     </div>
   </main>
 </div>
@@ -250,14 +256,32 @@
     ["KING RICHARD III", "KING RICHARD III:\nNow is the"],
     ["To be, or not to be", "To be, or not to be,"],
   ];
+  const CHAT_EXAMPLES = [
+    "Hi, how are you?",
+    "What do you do for a living?",
+    "Shall we have dinner tonight?",
+    "I lost my keys again.",
+    "Can you help me find the station?",
+  ];
+  // Text that changes with the mode: [continuation, chat].
+  const MODE_TEXT = {
+    title: ["Shakespeare continuation", "Chat"],
+    heading: ["What should Shakespeare say next?", "Say something"],
+    intro: ["Type the start of a line and the model will continue it.",
+            "Type a message and the model will reply as the Bot."],
+    placeholder: ["Start a line of Shakespeare…", "Message the bot…"],
+    footnote: ["Enter to send · Shift+Enter for a new line · The model continues your text; it doesn't remember earlier messages.",
+               "Enter to send · The model replies to each message on its own; it doesn't remember earlier ones."],
+  };
   // The model only sees its last `context_length` tokens, so "continue"
   // sends only the tail of the passage as the prompt.
   const CONTINUE_TAIL_CHARS = 1000;
   const STORAGE_KEY = "mini-llm-chats";
 
   let defaults = { temperature: 0.8, top_k: 40, max_new_tokens: 100 };
-  let chats = load();           // [{id, title, turns: [{prompt, reply, meta}]}]
+  let chats = load();           // [{id, title, turns: [{prompt, reply, meta, chat}]}]
   let current = null;           // chat being shown, or null for a new one
+  let chatMode = false;         // mode for new messages; each turn keeps its own
   let busy = false;
   let pendingError = "";
 
@@ -291,6 +315,16 @@
     $("settings").classList.toggle("open", on);
     $("toggle-settings").setAttribute("aria-expanded", on);
   }
+  function setChatMode(on) {
+    chatMode = on;
+    $("chat").checked = on;
+    const i = on ? 1 : 0;
+    $("title").textContent = MODE_TEXT.title[i];
+    $("prompt").placeholder = MODE_TEXT.placeholder[i];
+    $("footnote").textContent = MODE_TEXT.footnote[i];
+    if (!current) renderThread();   // the welcome screen depends on the mode
+  }
+  $("chat").addEventListener("change", () => setChatMode($("chat").checked));
   $("toggle-settings").addEventListener("click", (e) => { e.stopPropagation(); toggleSettings(); });
   document.addEventListener("click", (e) => {
     if (!$("settings").contains(e.target)) toggleSettings(false);
@@ -302,6 +336,7 @@
     $("max_new_tokens").max = info.limits.max_new_tokens;
     $("prompt").maxLength = info.limits.prompt_chars;
     applyDefaults();
+    setChatMode(Boolean(info.defaults.chat));
     $("stats").textContent =
       `${(info.parameters / 1e6).toFixed(2)}M params · val loss ${info.val_loss.toFixed(2)} · ${info.device}`;
   }).catch(() => {
@@ -336,10 +371,16 @@
     if (!current) {
       const w = document.createElement("div");
       w.className = "welcome";
-      w.innerHTML = "<h1>What should Shakespeare say next?</h1><p>Type the start of a line and the model will continue it.</p>";
+      const i = chatMode ? 1 : 0;
+      const h = document.createElement("h1");
+      h.textContent = MODE_TEXT.heading[i];
+      const p = document.createElement("p");
+      p.textContent = MODE_TEXT.intro[i];
+      w.append(h, p);
       const ex = document.createElement("div");
       ex.className = "examples";
-      for (const [label, text] of EXAMPLES) {
+      const examples = chatMode ? CHAT_EXAMPLES.map((t) => [t, t]) : EXAMPLES;
+      for (const [label, text] of examples) {
         const b = document.createElement("button");
         b.className = "example";
         b.textContent = label;
@@ -376,16 +417,18 @@
       if (turn.reply === null) {
         reply.innerHTML = '<span class="thinking"><span class="dot"></span></span>';
       } else {
-        reply.textContent = turn.reply;
+        // A chat reply can be empty if the model ends its turn at once.
+        reply.textContent = turn.reply || (turn.chat ? "(no reply)" : "");
         if (turn.loading) reply.insertAdjacentHTML("beforeend", ' <span class="thinking"><span class="dot"></span></span>');
         const ra = document.createElement("div");
         ra.className = "row-actions";
-        ra.append(actionBtn("copy", "Copy reply", (b) => copy(turn.prompt + turn.reply, b)));
+        // A chat reply stands alone; a continuation only reads right after its prompt.
+        const copyText = turn.chat ? turn.reply : turn.prompt + turn.reply;
+        ra.append(actionBtn("copy", "Copy reply", (b) => copy(copyText, b)));
         if (last) {
-          ra.append(
-            actionBtn("more", "Continue writing", () => continueTurn(turn)),
-            actionBtn("retry", "Regenerate", () => regenerate(turn)),
-          );
+          // Continuing a chat reply would run into the User's next line.
+          if (!turn.chat) ra.append(actionBtn("more", "Continue writing", () => continueTurn(turn)));
+          ra.append(actionBtn("retry", "Regenerate", () => regenerate(turn)));
         }
         if (turn.meta) {
           const m = document.createElement("span");
@@ -433,11 +476,11 @@
   function renderAll() { renderRecents(); renderThread(); updateSend(); }
 
   // ---- generation -------------------------------------------------------
-  async function request(prompt) {
+  async function request(prompt, chat) {
     const res = await fetch("/api/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt, ...settings() }),
+      body: JSON.stringify({ prompt, chat, ...settings() }),
     });
     const data = await res.json().catch(() => ({ error: "The server sent an unreadable reply." }));
     if (!res.ok) throw new Error(data.error || "Generation failed.");
@@ -453,7 +496,7 @@
     updateSend();
     renderThread();
     try {
-      const data = await request(prompt);
+      const data = await request(prompt, Boolean(turn.chat));
       onData(data);
       turn.meta = metaFor(data);
       save();
@@ -471,7 +514,7 @@
       current = { id: Date.now(), title: text.replace(/\s+/g, " ").trim().slice(0, 40), turns: [] };
       chats.unshift(current);
     }
-    const turn = { prompt: text, reply: null, meta: "" };
+    const turn = { prompt: text, reply: null, meta: "", chat: chatMode };
     current.turns.push(turn);
     $("prompt").value = "";
     autosize();
