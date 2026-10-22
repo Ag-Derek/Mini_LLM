@@ -71,9 +71,10 @@ The sanity check confirms:
 ===========================================================
 """
 
+import heapq
 import json
 import re
-from collections import Counter
+from collections import Counter, defaultdict
 from pathlib import Path
 
 import config
@@ -92,8 +93,9 @@ class BPETokenizer(Tokenizer):
         2. Represent each chunk as a list of characters,
            e.g. " cat" -> [" ", "c", "a", "t"].
         3. Repeatedly find the most frequent adjacent symbol pair across
-           the whole corpus and merge it into a single new symbol.
-           Each merge is recorded, in order, in self.merges.
+           the whole corpus (ties go to the alphabetically first pair, so
+           training is reproducible) and merge it into a single new
+           symbol. Each merge is recorded, in order, in self.merges.
         4. The final vocab is every symbol that appears anywhere in the
            corpus after all merges are applied, plus special tokens.
 
@@ -145,14 +147,13 @@ class BPETokenizer(Tokenizer):
         language model can learn from. The tradeoff is a larger vocab,
         since "the" and "The" now train as distinct symbol sequences.
         """
-        words = self._CHUNK_PATTERN.findall(text)
+        word_freqs = Counter(self._CHUNK_PATTERN.findall(text))
 
-        word_freqs = Counter(words)
-
-        # Each distinct chunk starts as a list of its characters.
-        splits: dict[str, list[str]] = {
-            word: list(word) for word in word_freqs
-        }
+        # Each distinct chunk starts as a list of its characters. Words are
+        # referred to by index from here on (cheaper to store in sets).
+        words = list(word_freqs)
+        freqs = [word_freqs[word] for word in words]
+        splits = [list(word) for word in words]
 
         # Track every symbol that ever exists during training, not just
         # whatever happens to survive in `splits` after the final merge.
@@ -171,17 +172,50 @@ class BPETokenizer(Tokenizer):
 
         merges_in_order: list[tuple[str, str]] = []
 
+        # Recounting every pair in the corpus after each merge is simple
+        # but slow: thousands of merges would mean thousands of full
+        # passes. A merge only changes the words that contain the merged
+        # pair, so instead keep running counts and update just those words:
+        #
+        #   pair_freq   pair -> occurrences across the corpus
+        #   containing  pair -> indices of words that contain it
+        #   heap        (-count, pair) entries for picking the most
+        #               frequent pair quickly. Counts change constantly,
+        #               so a new entry is pushed on every change and stale
+        #               ones (count no longer matches) are skipped on pop.
+        #               Equal counts pop in pair order: the tie-break rule.
+        pair_freq, containing = self._count_pairs(freqs, splits)
+        heap = [(-count, pair) for pair, count in pair_freq.items()]
+        heapq.heapify(heap)
+
         for _ in range(num_merges):
-            pair_freq = self._count_pairs(word_freqs, splits)
+            while heap and pair_freq.get(heap[0][1], 0) != -heap[0][0]:
+                heapq.heappop(heap)
+            if not heap:
+                break  # no adjacent pairs left to merge
 
-            if not pair_freq:
-                break  # nothing left that repeats
-
-            best_pair, _ = pair_freq.most_common(1)[0]
+            best_pair = heapq.heappop(heap)[1]
             merged_token = best_pair[0] + best_pair[1]
 
-            for word in splits:
-                splits[word] = self._merge_pair(splits[word], best_pair, merged_token)
+            changed: set[tuple[str, str]] = set()
+            for i in containing.pop(best_pair):
+                symbols, freq = splits[i], freqs[i]
+                for pair in zip(symbols, symbols[1:]):
+                    pair_freq[pair] -= freq
+                    changed.add(pair)
+                splits[i] = symbols = self._merge_pair(symbols, best_pair, merged_token)
+                for pair in zip(symbols, symbols[1:]):
+                    pair_freq[pair] += freq
+                    containing[pair].add(i)
+                    changed.add(pair)
+            # (A word can stay listed under a pair it no longer contains;
+            # processing it again just subtracts and re-adds the same counts.)
+
+            for pair in changed:
+                if pair_freq[pair] > 0:
+                    heapq.heappush(heap, (-pair_freq[pair], pair))
+                else:
+                    del pair_freq[pair]
 
             merges_in_order.append(best_pair)
             all_symbols.add(merged_token)
@@ -196,15 +230,19 @@ class BPETokenizer(Tokenizer):
 
     @staticmethod
     def _count_pairs(
-        word_freqs: dict[str, int], splits: dict[str, list[str]]
-    ) -> Counter:
-        """Count frequency of every adjacent symbol pair across the corpus."""
+        freqs: list[int], splits: list[list[str]]
+    ) -> tuple[Counter, defaultdict]:
+        """
+        Count every adjacent symbol pair across the corpus. Returns
+        (pair -> frequency, pair -> indices of the words containing it).
+        """
         pair_freq: Counter = Counter()
-        for word, freq in word_freqs.items():
-            symbols = splits[word]
-            for a, b in zip(symbols, symbols[1:]):
-                pair_freq[(a, b)] += freq
-        return pair_freq
+        containing: defaultdict = defaultdict(set)
+        for i, (symbols, freq) in enumerate(zip(splits, freqs)):
+            for pair in zip(symbols, symbols[1:]):
+                pair_freq[pair] += freq
+                containing[pair].add(i)
+        return pair_freq, containing
 
     @staticmethod
     def _merge_pair(
@@ -369,8 +407,8 @@ if __name__ == "__main__":
 
     # ------------------------------------------------------------------
     # Real-corpus comparison: train a second tokenizer on the full Tiny
-    # Shakespeare corpus (config.NUM_MERGES = 500 merges) and compare
-    # against the tiny 40-merge demo above. This is the number that
+    # Shakespeare corpus (config.NUM_MERGES merges) and compare against
+    # the tiny 40-merge demo above. This is the number that
     # actually matters for the project -- the demo above just exists to
     # sanity-check the mechanics on a string small enough to eyeball.
     # ------------------------------------------------------------------

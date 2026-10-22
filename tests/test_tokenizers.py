@@ -3,6 +3,8 @@ Tokenizer tests: BPE (the one the model trains with) plus the simpler
 character and word tokenizers it grew out of.
 """
 
+from collections import Counter
+
 import config
 from bpe_tokenizer import BPETokenizer
 from tokenizer import CharTokenizer
@@ -79,6 +81,39 @@ def test_bpe_encode_cache_does_not_change_results():
     first = tok.encode(SAMPLE)
     second = tok.encode(SAMPLE)  # served from the per-chunk cache
     assert first == second
+
+
+def reference_merges(text, num_merges):
+    """
+    BPE training done the simple, slow way: recount every pair in the
+    corpus before each merge. BPETokenizer.train() keeps running counts
+    instead; both must learn the same merges in the same order.
+    """
+    word_freqs = Counter(BPETokenizer._CHUNK_PATTERN.findall(text))
+    splits = {word: list(word) for word in word_freqs}
+    merges = []
+    for _ in range(num_merges):
+        pair_freq = Counter()
+        for word, freq in word_freqs.items():
+            for pair in zip(splits[word], splits[word][1:]):
+                pair_freq[pair] += freq
+        if not pair_freq:
+            break
+        # Most frequent pair; ties go to the alphabetically first one.
+        best = min(pair_freq, key=lambda pair: (-pair_freq[pair], pair))
+        merges.append(best)
+        for word in splits:
+            splits[word] = BPETokenizer._merge_pair(splits[word], best, best[0] + best[1])
+    return merges
+
+
+def test_bpe_training_matches_simple_reference():
+    # Enough merges to run out of pairs, which also covers early stopping
+    # and repeated symbols like the double spaces in SAMPLE.
+    tok = trained_bpe(num_merges=1000)
+    learned = sorted(tok.merges, key=tok.merges.get)
+    assert learned == reference_merges(SAMPLE, 1000)
+    assert len(learned) < 1000  # stopped early: every chunk fully merged
 
 
 # ---------------------------------------------------------------------------

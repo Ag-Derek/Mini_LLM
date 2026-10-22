@@ -71,7 +71,7 @@ Final LayerNorm
 Language Model Head
     │
     ▼
-Next Token Prediction (569-way logits)
+Next Token Prediction (one logit per vocabulary token)
     │
     ▼
 Training (CrossEntropyLoss + AdamW)
@@ -120,7 +120,7 @@ The project is now a **working end-to-end GPT-style language model**: train it, 
 
 * Character-level tokenizer
 * Word-level tokenizer
-* Byte Pair Encoding (BPE), trained on the real corpus (569-token vocabulary at 500 merges)
+* Byte Pair Encoding (BPE), trained on the real corpus (4,000 merges: a 4,069-token vocabulary on Tiny Shakespeare, 4,095 on the dialog corpus). Training updates pair counts only for the words each merge touches, so 4,000 merges take a few seconds
 * GPT-2-style pre-tokenization: words keep their leading space (`" the"`), and newlines are tokens, so `decode(encode(text)) == text` exactly
 * Case preserved (not lowercased) so character names and sentence starts carry signal
 * Automatic vocabulary construction
@@ -283,7 +283,7 @@ Current configuration:
 
 | Setting              | Value       |
 | --------------------- | ----------- |
-| Vocabulary size       | 569         |
+| Vocabulary size       | 4,069       |
 | Embedding dimension   | 256         |
 | Attention heads        | 8           |
 | Dimensions per head    | 32          |
@@ -292,7 +292,7 @@ Current configuration:
 | Dropout                | 0.2         |
 | FFN expansion          | 4×          |
 | Weight tying           | On          |
-| Total parameters       | ~4.91M      |
+| Total parameters       | ~5.81M      |
 
 The end-to-end forward pass has been verified — a batch of token IDs of shape `(batch, seq_len)` produces logits of shape `(batch, seq_len, vocab_size)`.
 
@@ -308,7 +308,7 @@ Adding GPT-2 initialization and the GPT-style AdamW settings (see Training) toge
 
 A training loop that:
 
-* Loads and tokenizes the Tiny Shakespeare corpus, reusing the tokenizer saved in `checkpoints/` when it matches the config (skips ~50s of BPE training)
+* Loads and tokenizes the Tiny Shakespeare corpus, reusing the tokenizer saved in `checkpoints/` when it matches the config
 * Builds train and validation `DataLoader`s
 * Instantiates `MiniLLM`, `CrossEntropyLoss`, and the `AdamW` optimizer with GPT-style settings: weight decay 0.1 on weight matrices only (LayerNorm gains and biases are left alone) and `betas=(0.9, 0.95)`
 * Runs a configurable number of epochs, drawing a fresh batch every step
@@ -327,7 +327,7 @@ A training loop that:
          And, now, beavoud?
 ```
 
-Perplexity reads as "how many tokens the model is effectively choosing between": 569 means pure guessing over the vocabulary, and lower is better.
+Perplexity reads as "how many tokens the model is effectively choosing between": a perplexity equal to the vocabulary size means pure guessing, and lower is better.
 
 **Bits per character** (`Val BPC`) is the validation loss divided by the average characters per token, converted to bits. Loss and perplexity are *per token*, so they change whenever the tokenizer does: with more BPE merges each token covers more text and per-token loss goes up, even if the model is no better or worse. Bits per character doesn't depend on the tokenizer, so use it to compare runs with different `NUM_MERGES`, or against character-level models.
 

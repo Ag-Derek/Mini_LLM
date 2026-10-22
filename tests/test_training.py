@@ -182,3 +182,14 @@ def test_custom_corpus_gets_its_own_checkpoint_dir():
 
 def test_explicit_checkpoint_dir_wins(tmp_path):
     assert train.resolve_checkpoint_dir("data/dialog_corpus.txt", tmp_path) == tmp_path
+
+
+def test_refuses_to_overwrite_a_trained_model(tmp_path):
+    (tmp_path / config.MODEL_CHECKPOINT_FILENAME).write_bytes(b"trained")
+    with pytest.raises(SystemExit):
+        train.check_not_overwriting(tmp_path, overwrite=False)
+    train.check_not_overwriting(tmp_path, overwrite=True)  # explicitly allowed
+
+
+def test_empty_checkpoint_dir_is_fine_to_train_into(tmp_path):
+    train.check_not_overwriting(tmp_path / "new_run", overwrite=False)

@@ -39,11 +39,19 @@ SPECIAL_TOKENS = [PAD_TOKEN, UNK_TOKEN, BOS_TOKEN, EOS_TOKEN]
 # ---------------------------------------------------------------------------
 # Tokenizer (bpe_tokenizer.py)
 # ---------------------------------------------------------------------------
-# Number of BPE merge operations to learn during training. Was 40/100/200
-# across different __main__ demos before; one real corpus needs one real
-# number. 500 is a reasonable starting point for a small corpus like Tiny
-# Shakespeare -- raise it once vocab coverage is checked.
-NUM_MERGES = 500
+# Number of BPE merge operations to learn during training. Was 500, which
+# leaves most words split into pieces (~2.45 characters per token on the
+# dialog corpus). Measured on the dialog corpus's held-out text:
+#
+#     merges   chars/token   text in a 128-token window   model params
+#        500          2.45                    313 chars          4.92M
+#      2,000          3.09                    395 chars          5.30M
+#      4,000          3.33                    426 chars          5.82M
+#      8,000          3.49                    447 chars          6.84M
+#
+# 4,000 gets most of the gain: past it, new tokens are rare whole words the
+# model sees too seldom to learn well, each costing EMBEDDING_DIM params.
+NUM_MERGES = 4000
 
 # ---------------------------------------------------------------------------
 # Dataset (dataset.py)

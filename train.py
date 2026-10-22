@@ -117,6 +117,8 @@ def parse_args(argv=None):
                         help="where to save the model and tokenizer (default: "
                              "config.CHECKPOINT_DIR, or checkpoints/<corpus name>/ "
                              "when --corpus is given)")
+    parser.add_argument("--overwrite", action="store_true",
+                        help="allow replacing a model already saved in the checkpoint dir")
     parser.add_argument("--epochs", type=int, default=config.EPOCHS,
                         help="passes over the training text (default: %(default)s); "
                              "a bigger corpus needs fewer")
@@ -142,11 +144,27 @@ def resolve_checkpoint_dir(corpus, checkpoint_dir):
     return default_checkpoint_dir()
 
 
+def check_not_overwriting(checkpoint_dir, overwrite):
+    """
+    Refuse to train into a folder that already holds a trained model,
+    unless --overwrite was given. A new run saves its first evaluation
+    over the old model within minutes, and a model can take hours to
+    train; a second run usually belongs in its own folder.
+    """
+    existing = Path(checkpoint_dir) / config.MODEL_CHECKPOINT_FILENAME
+    if existing.exists() and not overwrite:
+        raise SystemExit(
+            f"{existing} already holds a trained model, and this run would "
+            f"replace it.\nTrain into a new folder with --checkpoint-dir, "
+            f"or pass --overwrite to replace it."
+        )
+
+
 def load_or_train_tokenizer(train_text, checkpoint_dir=None):
     """
     Reuse the tokenizer saved in checkpoint_dir (defaults to
-    config.CHECKPOINT_DIR) by a previous run (BPE
-    training takes ~50s on the full corpus), otherwise train a new one.
+    config.CHECKPOINT_DIR) by a previous run, otherwise train a new one
+    (a few seconds on either corpus).
 
     The saved tokenizer is only reused if it has the configured number
     of merges and reproduces the training text exactly; anything else
@@ -182,6 +200,7 @@ def sample_text(model, tokenizer, device, prompt=config.SAMPLE_PROMPT):
 def main():
     args = parse_args()
     checkpoint_dir = resolve_checkpoint_dir(args.corpus, args.checkpoint_dir)
+    check_not_overwriting(checkpoint_dir, args.overwrite)
 
     torch.manual_seed(0)
     device = get_device()
