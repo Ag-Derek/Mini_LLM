@@ -1,5 +1,10 @@
 # Python 3.10+ (the code uses `X | Y` type hints).
 torch>=2.0
 
+# GPT-2's tokenizer (gpt2_tokenizer.py), and the pretrained weights plus
+# the logit check in load_gpt2.py. Not needed for training from scratch.
+tiktoken>=0.7
+transformers>=4.40
+
 # Only needed to run the test suite (`python -m pytest`).
 pytest>=7.0

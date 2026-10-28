@@ -58,7 +58,7 @@ class MiniLLM(nn.Module):
 
     def __init__(self, vocab_size, embedding_dim=None, num_heads=None,
                  num_layers=None, max_seq_length=None, dropout=None,
-                 tie_weights=None):
+                 tie_weights=None, gelu_approximate="none"):
         super().__init__()
         embedding_dim = embedding_dim or config.EMBEDDING_DIM
         max_seq_length = max_seq_length or config.MAX_SEQ_LENGTH
@@ -76,6 +76,7 @@ class MiniLLM(nn.Module):
             num_heads=num_heads,
             max_seq_length=max_seq_length,
             dropout=dropout,
+            gelu_approximate=gelu_approximate,
         )
 
         self.final_layer_norm = nn.LayerNorm(embedding_dim)
@@ -91,6 +92,87 @@ class MiniLLM(nn.Module):
             self.lm_head.weight = self.token_embedding.weight
 
         self._init_weights()
+
+    @classmethod
+    def from_pretrained_gpt2(cls, name="gpt2", dropout=0.0):
+        """
+        Build a MiniLLM with OpenAI's pretrained GPT-2 weights.
+
+        name: a Hugging Face GPT-2 model id -- "gpt2" (124M), "gpt2-medium"
+              (355M), "gpt2-large" (774M) or "gpt2-xl" (1.5B). The sizes
+              are read from its config, so all four work unchanged.
+
+        Returns (model, model_config), model_config being the keyword
+        arguments that rebuild the same architecture (what
+        save_checkpoint() stores).
+
+        MiniLLM was built the GPT-2 way, so this is a renaming plus one
+        wrinkle: Hugging Face's GPT-2 uses Conv1D layers, which store
+        their weight as (in_features, out_features) -- the transpose of
+        nn.Linear's (out_features, in_features).
+
+            Hugging Face key       MiniLLM key                 transpose
+            wte / wpe              token_ / position_embedding
+            h.{i}.ln_1 / ln_2      transformer.blocks.{i}.ln1 / ln2
+            h.{i}.attn.c_attn      ...attn.qkv                 yes
+            h.{i}.attn.c_proj      ...attn.proj                yes
+            h.{i}.mlp.c_fc         ...ffn.net.0                yes
+            h.{i}.mlp.c_proj       ...ffn.net.2                yes
+            ln_f                   final_layer_norm
+            lm_head                (tied to wte, nothing to copy)
+
+        Needs the `transformers` package, only for downloading the weights.
+        """
+        from transformers import GPT2LMHeadModel
+
+        hf_model = GPT2LMHeadModel.from_pretrained(name)
+        hf_config = hf_model.config
+        model_config = {
+            "vocab_size": hf_config.vocab_size,
+            "embedding_dim": hf_config.n_embd,
+            "num_heads": hf_config.n_head,
+            "num_layers": hf_config.n_layer,
+            "max_seq_length": hf_config.n_positions,
+            "dropout": dropout,
+            "tie_weights": True,
+            "gelu_approximate": "tanh",
+        }
+        model = cls(**model_config)
+
+        rename = [
+            ("transformer.wte.", "token_embedding."),
+            ("transformer.wpe.", "position_embedding."),
+            ("transformer.ln_f.", "final_layer_norm."),
+            ("transformer.h.", "transformer.blocks."),
+            (".ln_1.", ".ln1."), (".ln_2.", ".ln2."),
+            (".attn.c_attn.", ".attn.qkv."), (".attn.c_proj.", ".attn.proj."),
+            (".mlp.c_fc.", ".ffn.net.0."), (".mlp.c_proj.", ".ffn.net.2."),
+        ]
+        transposed = (".attn.qkv.weight", ".attn.proj.weight",
+                      ".ffn.net.0.weight", ".ffn.net.2.weight")
+
+        ours = model.state_dict()
+        missing = set(ours) - {"lm_head.weight"}
+        for key, tensor in hf_model.state_dict().items():
+            # Older transformers versions also save the causal mask as
+            # attn.bias / attn.masked_bias buffers; the fused attention
+            # needs no mask, and lm_head is the tied wte.
+            if key.endswith((".attn.bias", ".attn.masked_bias")) or key == "lm_head.weight":
+                continue
+            for old, new in rename:
+                key = key.replace(old, new)
+            if key.endswith(transposed):
+                tensor = tensor.t()
+            if ours[key].shape != tensor.shape:
+                raise ValueError(f"{key}: expected {tuple(ours[key].shape)}, "
+                                 f"got {tuple(tensor.shape)}")
+            with torch.no_grad():
+                ours[key].copy_(tensor)
+            missing.discard(key)
+
+        if missing:
+            raise ValueError(f"No GPT-2 weights for: {sorted(missing)}")
+        return model, model_config
 
     def _init_weights(self):
         """

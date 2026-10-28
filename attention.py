@@ -21,13 +21,16 @@ By the time a sequence reaches this module, every vector already encodes
 that lets each position look at every other position and decide how much
 to borrow from them when building its own updated representation.
 
-This file builds attention in three stages, each one a class you can run
+This file builds attention in four stages, each one a class you can run
 and inspect on its own:
 
     1. SelfAttentionHead     - a single scaled dot-product attention head
     2. CausalSelfAttentionHead - the same, but blocked from looking ahead
        (needed for a language model that predicts the next token)
     3. MultiHeadAttention    - several causal heads running in parallel
+    4. CausalSelfAttention   - the same math as 3, computed for all heads
+       at once. This is the one the model actually uses (transformer.py);
+       1-3 stay as the readable step-by-step version.
 
 Run this file directly to see shapes and a worked numeric example at
 every stage:
@@ -221,6 +224,73 @@ class MultiHeadAttention(nn.Module):
 
 
 # ---------------------------------------------------------------------------
+# 4. Fused multi-head attention
+# ---------------------------------------------------------------------------
+class CausalSelfAttention(nn.Module):
+    """
+    MultiHeadAttention, computed for every head in one go -- and laid out
+    exactly like GPT-2's attention, so its pretrained weights load directly.
+
+    Two differences from MultiHeadAttention, neither of which changes the
+    math:
+
+        - One Linear (qkv) produces Q, K and V for all heads at once,
+          instead of 3 * num_heads small Linears. Its output is split into
+          Q, K, V, and each of those into num_heads chunks of head_dim:
+          head h's query is columns h*head_dim .. (h+1)*head_dim of Q,
+          the same slice MultiHeadAttention's concatenation gives head h.
+        - F.scaled_dot_product_attention does scale -> causal mask ->
+          softmax -> weighted sum in one fused kernel, without building a
+          mask buffer.
+
+    So with the per-head weights stacked into qkv (checkpoint.py does this
+    for checkpoints saved before this class existed) both give the same
+    output. The qkv Linear has a bias because GPT-2's does; for older
+    checkpoints, which had none, it is zero.
+    """
+
+    def __init__(self, embedding_dim, num_heads):
+        super().__init__()
+        assert embedding_dim % num_heads == 0, (
+            "embedding_dim must be divisible by num_heads"
+        )
+        self.num_heads = num_heads
+        self.qkv = nn.Linear(embedding_dim, 3 * embedding_dim)
+        self.proj = nn.Linear(embedding_dim, embedding_dim)
+
+    def forward(self, x, return_attn=False):
+        """
+        x: (batch, seq_len, embedding_dim)
+        Returns: (out, attn_maps). out is (batch, seq_len, embedding_dim);
+                 attn_maps is (batch, num_heads, seq_len, seq_len) if
+                 return_attn=True, else None (the fused kernel never
+                 materializes the weights, so they're only computed when
+                 asked for).
+        """
+        B, T, C = x.shape
+
+        q, k, v = self.qkv(x).split(C, dim=-1)  # each (B, T, C)
+        # (B, T, C) -> (B, num_heads, T, head_dim): every head becomes its
+        # own batch entry, so one matmul serves all of them.
+        q, k, v = (t.view(B, T, self.num_heads, C // self.num_heads).transpose(1, 2)
+                   for t in (q, k, v))
+
+        if return_attn:
+            scores = q @ k.transpose(-2, -1) / math.sqrt(q.size(-1))
+            future = torch.triu(torch.ones(T, T, dtype=torch.bool, device=x.device), 1)
+            attn_maps = F.softmax(scores.masked_fill(future, float("-inf")), dim=-1)
+            out = attn_maps @ v
+        else:
+            attn_maps = None
+            out = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+
+        # Back to (B, T, C): the heads' outputs side by side, as in
+        # MultiHeadAttention's torch.cat.
+        out = out.transpose(1, 2).contiguous().view(B, T, C)
+        return self.proj(out), attn_maps
+
+
+# ---------------------------------------------------------------------------
 # Demo / sanity check
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
@@ -260,3 +330,15 @@ if __name__ == "__main__":
     print("Output shape:", out.shape)
     print("Number of attention maps (one per head):", len(attn_maps))
     print("First head's attention weights:\n", attn_maps[0][0])
+
+    print("\n--- 4. Fused attention, loaded with the weights from 3 ---")
+    fused = CausalSelfAttention(embedding_dim, num_heads=4)
+    with torch.no_grad():
+        fused.qkv.weight.copy_(torch.cat(
+            [torch.cat([h.query.weight for h in mha.heads]),
+             torch.cat([h.key.weight for h in mha.heads]),
+             torch.cat([h.value.weight for h in mha.heads])]))
+        fused.qkv.bias.zero_()
+        fused.proj.load_state_dict(mha.proj.state_dict())
+    fused_out, _ = fused(x)
+    print("Same output as multi-head attention:", torch.allclose(fused_out, out, atol=1e-6))

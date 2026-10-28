@@ -5,8 +5,11 @@ character and word tokenizers it grew out of.
 
 from collections import Counter
 
+import pytest
+
 import config
 from bpe_tokenizer import BPETokenizer
+from checkpoint import load_tokenizer
 from tokenizer import CharTokenizer
 from word_tokenizer import WordTokenizer
 
@@ -133,3 +136,30 @@ def test_word_tokenizer_token_level_round_trip():
     tok.train(SAMPLE)
     ids = tok.encode("Speak, speak.")
     assert tok.encode(tok.decode(ids)) == ids
+
+
+# ---------------------------------------------------------------------------
+# GPT-2 tokenizer (pretrained; tiktoken downloads its merge table once)
+# ---------------------------------------------------------------------------
+
+def test_gpt2_tokenizer_round_trips_any_text():
+    pytest.importorskip("tiktoken")
+    from gpt2_tokenizer import END_OF_TEXT, GPT2Tokenizer
+
+    tok = GPT2Tokenizer()
+    assert tok.vocab_size == 50257
+    text = SAMPLE + "café 🙂 \t\n"  # byte-level: nothing becomes <unk>
+    assert tok.decode(tok.encode(text)) == text
+    assert tok.encode("Hi" + END_OF_TEXT) == tok.encode("Hi") + [tok.eot_id]
+
+
+def test_load_tokenizer_picks_the_saved_type(tmp_path):
+    pytest.importorskip("tiktoken")
+    from gpt2_tokenizer import GPT2Tokenizer
+
+    gpt2_path, bpe_path = tmp_path / "gpt2.json", tmp_path / "bpe.json"
+    GPT2Tokenizer().save(gpt2_path)
+    trained_bpe().save(bpe_path)
+
+    assert isinstance(load_tokenizer(gpt2_path), GPT2Tokenizer)
+    assert isinstance(load_tokenizer(bpe_path), BPETokenizer)

@@ -13,7 +13,9 @@ A checkpoint is two files in config.CHECKPOINT_DIR:
 
     mini_llm.pt      model weights + the hyperparameters needed to
                      rebuild an identically shaped MiniLLM
-    tokenizer.json   the BPE tokenizer the model was trained with
+    tokenizer.json   the tokenizer the model was trained with: our own
+                     BPE (bpe_tokenizer.py), or for a model converted
+                     from GPT-2 (load_gpt2.py) just {"type": "tiktoken"}
 
 Both are needed: the model's token ids only mean something with the
 exact vocabulary and merges that produced them.
@@ -24,6 +26,8 @@ a bigger EMBEDDING_DIM for the next experiment -- doesn't break loading
 an older checkpoint.
 """
 
+import json
+import re
 from pathlib import Path
 
 import torch
@@ -31,6 +35,10 @@ import torch
 import config
 from bpe_tokenizer import BPETokenizer
 from model import MiniLLM
+
+# Matches the per-head attention weights checkpoints had before
+# CausalSelfAttention, e.g. "transformer.blocks.0.attn.heads.3.query.weight".
+_PER_HEAD_KEY = re.compile(r"(transformer\.blocks\.\d+\.attn\.)heads\.(\d+)\.(.+)")
 
 
 def default_checkpoint_dir() -> Path:
@@ -62,6 +70,52 @@ def save_checkpoint(model, model_config, tokenizer, epoch, val_loss,
     tokenizer.save(checkpoint_dir / config.TOKENIZER_FILENAME)
 
 
+def load_tokenizer(path):
+    """
+    Load whichever tokenizer a checkpoint was saved with. GPT2Tokenizer
+    writes a "type" field; files without one are our own BPETokenizer.
+    """
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    if data.get("type") == "tiktoken":
+        from gpt2_tokenizer import GPT2Tokenizer  # needs tiktoken; only import when used
+        return GPT2Tokenizer.load(path)
+    return BPETokenizer.load(path)
+
+
+def upgrade_per_head_attention(state):
+    """
+    Convert a state dict saved with the old per-head attention
+    (attention.py's MultiHeadAttention: one query/key/value Linear per
+    head, plus a causal_mask buffer each) to CausalSelfAttention's single
+    qkv Linear. Returns a new state dict; state dicts that are already in
+    the new layout come back unchanged.
+
+    The fused qkv weight is the per-head weights stacked in the order
+    CausalSelfAttention splits them: all heads' queries, then keys, then
+    values, each in head order. The old Linears had no bias, so the qkv
+    bias is zero -- the converted model computes exactly the same thing.
+    """
+    per_layer: dict[str, dict[str, dict[int, torch.Tensor]]] = {}
+    upgraded = {}
+    for key, tensor in state.items():
+        match = _PER_HEAD_KEY.fullmatch(key)
+        if match is None:
+            upgraded[key] = tensor
+            continue
+        prefix, head, name = match[1], int(match[2]), match[3]
+        if name == "causal_mask":
+            continue  # the fused attention builds its mask on the fly
+        name = name.removesuffix(".weight")
+        per_layer.setdefault(prefix, {}).setdefault(name, {})[head] = tensor
+
+    for prefix, parts in per_layer.items():
+        stacked = [torch.cat([parts[name][h] for h in sorted(parts[name])])
+                   for name in ("query", "key", "value")]
+        upgraded[prefix + "qkv.weight"] = torch.cat(stacked)
+        upgraded[prefix + "qkv.bias"] = torch.zeros(upgraded[prefix + "qkv.weight"].shape[0])
+    return upgraded
+
+
 def load_checkpoint(checkpoint_dir=None, map_location="cpu"):
     """
     Rebuild the model and tokenizer saved by save_checkpoint().
@@ -85,13 +139,16 @@ def load_checkpoint(checkpoint_dir=None, map_location="cpu"):
     # Checkpoints saved before weight tying existed have no "tie_weights"
     # key and separate embedding / lm_head weights. Loading those into a
     # tied model would silently let one matrix overwrite the other.
-    model_config = {"tie_weights": False, **checkpoint["model_config"]}
+    # Likewise, checkpoints from before the GPT-2-compatible GELU option
+    # were trained with the exact GELU.
+    model_config = {"tie_weights": False, "gelu_approximate": "none",
+                    **checkpoint["model_config"]}
     model = MiniLLM(**model_config)
-    model.load_state_dict(checkpoint["model_state"])
+    model.load_state_dict(upgrade_per_head_attention(checkpoint["model_state"]))
     model.to(map_location)
     model.eval()
 
-    tokenizer = BPETokenizer.load(tokenizer_path)
+    tokenizer = load_tokenizer(tokenizer_path)
 
     info = {"epoch": checkpoint["epoch"], "val_loss": checkpoint["val_loss"]}
     return model, tokenizer, info

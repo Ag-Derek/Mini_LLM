@@ -94,14 +94,14 @@ EMBEDDING_DIM = 256
 # Attention / Transformer (attention.py, transformer.py, model.py)
 # ---------------------------------------------------------------------------
 # Longest sequence the model can ever be asked to attend over. This sizes
-# the causal mask buffer in CausalSelfAttentionHead, so it must be >=
-# CONTEXT_LENGTH. Equal to CONTEXT_LENGTH: the model never trains on
+# the position embedding table, so it must be >= CONTEXT_LENGTH. Equal to
+# CONTEXT_LENGTH: the model never trains on
 # positions past the training window, and generation crops its input to
 # the last MAX_SEQ_LENGTH tokens anyway (MiniLLM.generate).
 MAX_SEQ_LENGTH = CONTEXT_LENGTH
 
 # Number of parallel attention heads. EMBEDDING_DIM must be divisible by
-# this (asserted in MultiHeadAttention). 8 heads keeps each head at 32
+# this (asserted in CausalSelfAttention). 8 heads keeps each head at 32
 # dimensions, the same as the earlier 128 / 4 setup.
 NUM_HEADS = 8
 

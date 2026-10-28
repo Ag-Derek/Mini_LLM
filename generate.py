@@ -115,9 +115,10 @@ def newline_token_ids(tokenizer):
     """
     Ids of every token that contains a line break. The BPE tokenizer never
     merges whitespace with letters, so the first token after the end of a
-    line is always one of these.
+    line is always one of these. Decoding each id (rather than reading a
+    vocab dict) works for every tokenizer, GPT2Tokenizer included.
     """
-    return {i for token, i in tokenizer.stoi.items() if "\n" in token}
+    return {i for i in range(tokenizer.vocab_size) if "\n" in tokenizer.decode([i])}
 
 
 def chat_reply(model, tokenizer, message, args, device):

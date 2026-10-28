@@ -9,7 +9,8 @@ Every model here is tiny (dims of 16-32) so the suite runs in seconds.
 import torch
 import torch.nn as nn
 
-from attention import CausalSelfAttentionHead, MultiHeadAttention
+from attention import CausalSelfAttention, CausalSelfAttentionHead, MultiHeadAttention
+from checkpoint import upgrade_per_head_attention
 from embeddings import MyEmbedding
 from model import MiniLLM, get_device
 
@@ -52,6 +53,38 @@ def test_multi_head_attention_preserves_shape():
     assert len(maps) == 4
 
 
+def test_upgraded_per_head_weights_give_the_same_output():
+    # The fused attention is the same math as the per-head version: with
+    # the per-head weights converted (what loading an old checkpoint
+    # does), the outputs match.
+    torch.manual_seed(0)
+    mha = MultiHeadAttention(embedding_dim=16, num_heads=4, max_seq_length=SEQ)
+    old_state = {f"transformer.blocks.0.attn.{k}": v for k, v in mha.state_dict().items()}
+    new_state = upgrade_per_head_attention(old_state)
+
+    fused = CausalSelfAttention(embedding_dim=16, num_heads=4)
+    prefix = "transformer.blocks.0.attn."
+    fused.load_state_dict({k.removeprefix(prefix): v for k, v in new_state.items()})
+
+    x = torch.randn(2, SEQ, 16)
+    assert torch.allclose(fused(x)[0], mha(x)[0], atol=1e-6)
+
+
+def test_fused_attention_maps_are_causal_and_match_the_fast_path():
+    torch.manual_seed(0)
+    attn = CausalSelfAttention(embedding_dim=16, num_heads=4)
+    x = torch.randn(2, SEQ, 16)
+
+    fast, no_maps = attn(x)
+    slow, maps = attn(x, return_attn=True)
+    assert no_maps is None
+    assert torch.allclose(fast, slow, atol=1e-6)
+
+    assert maps.shape == (2, 4, SEQ, SEQ)
+    future = torch.triu(torch.ones(SEQ, SEQ, dtype=torch.bool), diagonal=1)
+    assert torch.all(maps[..., future] == 0)
+
+
 # ---------------------------------------------------------------------------
 # Full model
 # ---------------------------------------------------------------------------
@@ -88,7 +121,7 @@ def test_gpt2_initialization():
 
     # Weights start at std 0.02 (embeddings included, not nn.Embedding's 1.0)...
     for weight in (model.token_embedding.weight, model.position_embedding.weight,
-                   block.attn.heads[0].query.weight, block.ffn.net[0].weight):
+                   block.attn.qkv.weight, block.ffn.net[0].weight):
         assert abs(weight.std().item() - 0.02) < 0.003
     assert torch.all(block.ffn.net[0].bias == 0)
 

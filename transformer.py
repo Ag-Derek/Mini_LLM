@@ -16,8 +16,9 @@ Where this fits in the pipeline:
                 |
     Final LayerNorm + Vocabulary Projection  (model.py)
 
-This file does NOT reimplement attention — it imports MultiHeadAttention
-directly from attention.py and wires it into a full Pre-Norm block:
+This file does NOT reimplement attention — it imports CausalSelfAttention
+(the fused form of MultiHeadAttention) from attention.py and wires it into
+a full Pre-Norm block:
 
     X1 = X  + Dropout(MHA(LayerNorm(X)))
     X2 = X1 + FFN(LayerNorm(X1))
@@ -42,7 +43,7 @@ import torch
 import torch.nn as nn
 
 import config
-from attention import MultiHeadAttention
+from attention import CausalSelfAttention
 
 
 # ---------------------------------------------------------------------------
@@ -60,15 +61,21 @@ class FeedForward(nn.Module):
 
     The hidden layer is widened by hidden_mult (4x, matching GPT-style
     models) before being projected back down to embedding_dim.
+
+    gelu_approximate: "none" is the exact GELU; "tanh" is the cheaper
+    approximation GPT-2 was trained with, so loading GPT-2's weights
+    needs it. The two differ by < 0.001, but a pretrained model's
+    weights expect the one it was trained with.
     """
 
-    def __init__(self, embedding_dim, hidden_mult=4, dropout=0.0):
+    def __init__(self, embedding_dim, hidden_mult=4, dropout=0.0,
+                 gelu_approximate="none"):
         super().__init__()
         hidden_dim = embedding_dim * hidden_mult
 
         self.net = nn.Sequential(
             nn.Linear(embedding_dim, hidden_dim),
-            nn.GELU(),
+            nn.GELU(approximate=gelu_approximate),
             nn.Linear(hidden_dim, embedding_dim),
             nn.Dropout(dropout),
         )
@@ -87,7 +94,7 @@ class FeedForward(nn.Module):
 class TransformerBlock(nn.Module):
     """
     One Pre-Norm Transformer block, combining attention.py's
-    MultiHeadAttention with a FeedForward network:
+    CausalSelfAttention with a FeedForward network:
 
         X1 = X  + Dropout(MHA(LayerNorm(X)))
         X2 = X1 + FFN(LayerNorm(X1))
@@ -97,25 +104,27 @@ class TransformerBlock(nn.Module):
     residual stream. This keeps the residual path clean, which makes
     stacks of many blocks much easier to train than Post-Norm.
 
-    attention.py's MultiHeadAttention.forward returns (out, attn_maps) —
-    this block passes attn_maps through so you can still inspect what
-    each head is attending to, e.g. for debugging or visualization.
+    With return_attn=True the block also returns the attention weights,
+    shape (batch, num_heads, seq_len, seq_len), so you can still inspect
+    what each head is attending to, e.g. for debugging or visualization.
     """
 
     def __init__(self, embedding_dim=None, num_heads=None,
-                 max_seq_length=None, dropout=None):
+                 max_seq_length=None, dropout=None, gelu_approximate="none"):
         super().__init__()
         embedding_dim = embedding_dim or config.EMBEDDING_DIM
         num_heads = num_heads or config.NUM_HEADS
-        max_seq_length = max_seq_length or config.MAX_SEQ_LENGTH
         dropout = config.DROPOUT if dropout is None else dropout
+        # max_seq_length is accepted for compatibility with callers but no
+        # longer needed: the fused attention has no fixed-size mask buffer.
 
         self.ln1 = nn.LayerNorm(embedding_dim)
-        self.attn = MultiHeadAttention(embedding_dim, num_heads, max_seq_length)
+        self.attn = CausalSelfAttention(embedding_dim, num_heads)
         self.attn_dropout = nn.Dropout(dropout)
 
         self.ln2 = nn.LayerNorm(embedding_dim)
-        self.ffn = FeedForward(embedding_dim, dropout=dropout)
+        self.ffn = FeedForward(embedding_dim, dropout=dropout,
+                               gelu_approximate=gelu_approximate)
 
     def forward(self, x, return_attn=False):
         """
@@ -123,7 +132,7 @@ class TransformerBlock(nn.Module):
         Returns: (batch, seq_len, embedding_dim), same shape as input
                  (plus attn_maps if return_attn=True)
         """
-        attn_out, attn_maps = self.attn(self.ln1(x))
+        attn_out, attn_maps = self.attn(self.ln1(x), return_attn=return_attn)
         x = x + self.attn_dropout(attn_out)
         x = x + self.ffn(self.ln2(x))
 
@@ -144,12 +153,13 @@ class TransformerBlocks(nn.Module):
     """
 
     def __init__(self, num_layers=None, embedding_dim=None, num_heads=None,
-                 max_seq_length=None, dropout=None):
+                 max_seq_length=None, dropout=None, gelu_approximate="none"):
         super().__init__()
         num_layers = num_layers or config.NUM_LAYERS
 
         self.blocks = nn.ModuleList([
-            TransformerBlock(embedding_dim, num_heads, max_seq_length, dropout)
+            TransformerBlock(embedding_dim, num_heads, max_seq_length, dropout,
+                             gelu_approximate)
             for _ in range(num_layers)
         ])
 
@@ -193,7 +203,7 @@ if __name__ == "__main__":
     out, attn_maps = block(x, return_attn=True)
     print("Output shape:", out.shape)
     assert out.shape == x.shape, "block must preserve shape"
-    print("Number of attention maps (one per head):", len(attn_maps))
+    print("Attention maps (batch, heads, T, T):", tuple(attn_maps.shape))
 
     print(f"\n--- 2. Stack of {config.NUM_LAYERS} Transformer blocks ---")
     blocks = TransformerBlocks()
